@@ -488,15 +488,18 @@ const scrapeUrlContent = async (inputUrl: string): Promise<{ title: string; cont
       };
   }
 
-  const WECHAT_API_KEY = "6d95009ffa75064c88af";
-  const MEOW_API_KEY = "lyyyu0xksg9gbg91-91a7hymet1bl";
+  const WECHAT_API_URL = import.meta.env.VITE_WECHAT_API_URL || "http://data.wxrank.com/weixin/artinfo";
+  const WECHAT_PROXY_URL = import.meta.env.VITE_WECHAT_PROXY_URL || "";
+  const WECHAT_API_KEY = import.meta.env.VITE_WECHAT_API_KEY || "";
+  const MEOW_API_URL = import.meta.env.VITE_MEOW_API_URL || "https://api.meowload.net/openapi/extract/post";
+  const MEOW_API_KEY = import.meta.env.VITE_MEOW_API_KEY || "";
   
   // 1. WeChat API - PRIORITY 1
   if (url.includes('mp.weixin.qq.com')) {
       try {
-         const targetUrl = "http://data.wxrank.com/weixin/artinfo";
+         const targetUrl = WECHAT_API_URL;
          // Use a CORS proxy to bypass Mixed Content (http vs https) and CORS headers restrictions
-         const proxyUrl = "https://corsproxy.io/?" + targetUrl;
+         const proxyUrl = WECHAT_PROXY_URL ? `${WECHAT_PROXY_URL}${targetUrl}` : targetUrl;
 
          const response = await fetch(proxyUrl, {
             method: 'POST',
@@ -539,7 +542,7 @@ const scrapeUrlContent = async (inputUrl: string): Promise<{ title: string; cont
   // For non-WeChat links, prioritize MeowLoad to get rich media info
   if (!url.includes('mp.weixin.qq.com')) {
       try {
-          const response = await fetch('https://api.meowload.net/openapi/extract/post', {
+          const response = await fetch(MEOW_API_URL, {
               method: 'POST',
               headers: {
                   'Content-Type': 'application/json',
