@@ -1756,6 +1756,7 @@ const ProjectDetailView: React.FC<{
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [selectedWork, setSelectedWork] = useState<Work | null>(null);
   const [showProjectDropdown, setShowProjectDropdown] = useState(false);
+  const [worksListMode, setWorksListMode] = useState<'works' | 'materials'>('works');
 
   // Chat History
   const [chatHistory, setChatHistory] = useState<any[]>([]);
@@ -1895,6 +1896,13 @@ const ProjectDetailView: React.FC<{
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
     };
   }, []);
+
+  // Reset left list mode when re-entering works tab
+  useEffect(() => {
+    if (activeTab === 'works') {
+      setWorksListMode('works');
+    }
+  }, [activeTab]);
 
   // Close filter dropdown on outside click
   useEffect(() => {
@@ -2459,14 +2467,25 @@ const ProjectDetailView: React.FC<{
         
         {/* COLUMN 1: LEFT SIDEBAR (Materials OR Works List) */}
         <div 
-           className="bg-white rounded-2xl flex flex-col flex-shrink-0 shadow-sm border border-gray-200/50 overflow-hidden"
-           style={{ width: leftColWidth }}
+          className="bg-white rounded-2xl flex flex-col flex-shrink-0 shadow-sm border border-gray-200/50 overflow-hidden"
+          style={{ width: leftColWidth }}
         >
           {/* Header */}
           <div className="p-4 flex items-center justify-between">
              {activeTab === 'works' ? (
-               <div className="flex items-center gap-1 text-sm font-bold text-gray-900">
-                  <span>Works</span>
+               <div className="flex items-center gap-1 bg-gray-50 rounded-full p-1">
+                  <button
+                    onClick={() => setWorksListMode('works')}
+                    className={`px-3 py-1 text-xs font-semibold rounded-full transition-colors ${worksListMode === 'works' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                  >
+                    Works
+                  </button>
+                  <button
+                    onClick={() => setWorksListMode('materials')}
+                    className={`px-3 py-1 text-xs font-semibold rounded-full transition-colors ${worksListMode === 'materials' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                  >
+                    Materials
+                  </button>
                </div>
              ) : (
                 <div className="relative" ref={filterRef}>
@@ -2504,28 +2523,73 @@ const ProjectDetailView: React.FC<{
           </div>
 
           {/* List Content */}
-          <div className="flex-1 overflow-y-auto px-2 space-y-1 pb-4 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto px-2 pb-4 custom-scrollbar">
              {activeTab === 'works' ? (
-                // WORKS LIST
-                works.map(work => (
-                   <div 
-                     key={work.id} 
-                     onClick={() => {
-                        setSelectedWork(work);
-                        // Also automatically add to chat references (Single Select)
-                        setChatReferences([work]);
-                     }}
-                     className={`group flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${selectedWork?.id === work.id ? 'bg-blue-50/60' : 'hover:bg-gray-50'}`}
-                   >
-                      <div className="mt-0.5 flex-shrink-0 p-1 bg-gray-50 border border-gray-100 rounded">
-                        {getIconForWork(work.type)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h4 className={`text-sm font-medium leading-snug mb-1 line-clamp-2 ${selectedWork?.id === work.id ? 'text-gray-900' : 'text-gray-700'}`}>{work.title}</h4>
-                        <span className="text-xs text-gray-400">{work.date}</span>
-                      </div>
-                   </div>
-                ))
+                worksListMode === 'works' ? (
+                  // WORKS LIST
+                  works.map(work => (
+                     <div 
+                       key={work.id} 
+                       onClick={() => {
+                          setSelectedWork(work);
+                          setChatReferences([work]);
+                       }}
+                       className={`group flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${selectedWork?.id === work.id ? 'bg-blue-50/60' : 'hover:bg-gray-50'}`}
+                     >
+                        <div className="mt-0.5 flex-shrink-0 p-1 bg-gray-50 border border-gray-100 rounded">
+                          {getIconForWork(work.type)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h4 className={`text-sm font-medium leading-snug mb-1 line-clamp-2 ${selectedWork?.id === work.id ? 'text-gray-900' : 'text-gray-700'}`}>{work.title}</h4>
+                          <span className="text-xs text-gray-400">{work.date}</span>
+                        </div>
+                     </div>
+                  ))
+                ) : (
+                  // MATERIALS CHECKLIST (moved from right column)
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between px-2 pt-2">
+                      <button 
+                        className="flex items-center gap-2 text-xs font-semibold text-gray-700 hover:text-gray-900"
+                        onClick={toggleSelectAll}
+                      >
+                        {selectedContextIds.size === MOCK_MATERIALS.length ? (
+                          <CheckSquareIcon className="w-4 h-4 text-gray-900" />
+                        ) : (
+                          <SquareIcon className="w-4 h-4 text-gray-400" />
+                        )}
+                        <span>Select All</span>
+                      </button>
+                      <span className="text-[11px] text-gray-400">{selectedContextIds.size} selected</span>
+                    </div>
+                    {MOCK_MATERIALS.map(material => {
+                      const isSelected = selectedContextIds.has(material.id);
+                      return (
+                        <div 
+                           key={material.id} 
+                           className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${isSelected ? 'bg-gray-50' : 'hover:bg-gray-50'}`}
+                           onClick={() => toggleContextSelection(material.id)}
+                        >
+                           <div className="mt-0.5 text-gray-400">
+                              {isSelected ? <CheckSquareIcon className="w-4 h-4 text-gray-900" /> : <SquareIcon className="w-4 h-4" /> }
+                           </div>
+                           <div className="flex-1 min-w-0">
+                               <div className="flex items-center gap-2 mb-1">
+                                  {getIconForType(material.type)}
+                                  <h4 className={`text-sm leading-snug line-clamp-2 ${isSelected ? 'text-gray-900 font-medium' : 'text-gray-500'}`}>
+                                     {material.title}
+                                  </h4>
+                               </div>
+                               <div className="text-xs text-gray-400 pl-6 flex items-center justify-between">
+                                  <span>{material.date}</span>
+                                  {material.sourceUrl && <LinkIcon className="w-3 h-3"/>}
+                               </div>
+                           </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
              ) : (
                // MATERIALS LIST
                filteredProjectItems.length > 0 ? (
@@ -2538,7 +2602,6 @@ const ProjectDetailView: React.FC<{
                          setSelectedMaterial(target);
                          setIsEditing(false); // Reset edit mode on select
 
-                         // Automatically add to chat references if not already there (Single Select)
                          setChatReferences([target]);
                       }}
                       className={`group relative flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${selectedMaterial.id === item.id ? 'bg-blue-50/60' : 'hover:bg-gray-50'}`}
@@ -2694,7 +2757,10 @@ const ProjectDetailView: React.FC<{
                         {CREATION_TEMPLATES.map(template => (
                            <div 
                               key={template.id} 
-                              onClick={() => setSelectedTemplate(template)}
+                              onClick={() => {
+                                 setSelectedTemplate(template);
+                                 setWorksListMode('materials');
+                              }}
                               className={`group relative bg-white border border-gray-200 rounded-xl p-6 hover:shadow-md transition-shadow cursor-pointer overflow-hidden ${template.color}`}
                            >
                               <div className="mb-4">{template.icon}</div>
@@ -2781,70 +2847,13 @@ const ProjectDetailView: React.FC<{
         >
         </div>
 
-        {/* COLUMN 3: RIGHT SIDEBAR (Chat OR Material Context Selector) */}
+        {/* COLUMN 3: RIGHT SIDEBAR (Chat) */}
         <div 
           className="bg-white rounded-2xl flex flex-col flex-shrink-0 shadow-sm border border-gray-200/50 overflow-hidden z-10"
           style={{ width: rightColWidth }}
         >
-           {/* ... (Right sidebar logic remains largely the same, reusing existing state/props) ... */}
-           {activeTab === 'works' ? (
-              // CONTEXT SELECTION (Checklist)
-              <>
-                 <div className="h-12 border-b border-gray-100 flex items-center px-4 bg-gray-50/50">
-                    <div 
-                      className="flex items-center gap-2 cursor-pointer"
-                      onClick={toggleSelectAll}
-                    >
-                       {selectedContextIds.size === MOCK_MATERIALS.length ? (
-                          <CheckSquareIcon className="w-4 h-4 text-gray-900" />
-                       ) : (
-                          <SquareIcon className="w-4 h-4 text-gray-400" />
-                       )}
-                       <span className="font-bold text-sm text-gray-700">Select All</span>
-                    </div>
-                 </div>
-
-                 <div className="flex-1 overflow-y-auto p-2 bg-white custom-scrollbar">
-                    {MOCK_MATERIALS.map(material => {
-                      const isSelected = selectedContextIds.has(material.id);
-                      return (
-                        <div 
-                           key={material.id} 
-                           className={`flex items-start gap-3 p-3 mb-1 rounded-lg cursor-pointer transition-colors ${isSelected ? 'bg-gray-50' : 'hover:bg-gray-50'}`}
-                           onClick={() => toggleContextSelection(material.id)}
-                        >
-                           <div className="mt-0.5 text-gray-400">
-                              {isSelected ? <CheckSquareIcon className="w-4 h-4 text-gray-900" /> : <SquareIcon className="w-4 h-4" /> }
-                           </div>
-                           <div className="flex-1 min-w-0">
-                               <div className="flex items-center gap-2 mb-1">
-                                  {getIconForType(material.type)}
-                                  <h4 className={`text-sm leading-snug line-clamp-2 ${isSelected ? 'text-gray-900 font-medium' : 'text-gray-500'}`}>
-                                     {material.title}
-                                  </h4>
-                               </div>
-                               <div className="text-xs text-gray-400 pl-6 flex items-center justify-between">
-                                  <span>{material.date}</span>
-                                  {material.sourceUrl && <LinkIcon className="w-3 h-3"/>}
-                               </div>
-                           </div>
-                        </div>
-                      );
-                    })}
-                 </div>
-                 
-                 {!selectedTemplate && !selectedWork && (
-                    <div className="p-4 border-t border-gray-100 bg-white">
-                       <Button className="w-full bg-gray-900 text-white rounded-lg py-3 shadow-lg flex items-center justify-center gap-2 hover:bg-black">
-                          <SparklesIcon className="w-4 h-4" />
-                          Generate ({selectedContextIds.size})
-                       </Button>
-                    </div>
-                 )}
-              </>
-           ) : (
-              // CHAT INTERFACE
-              <>
+           {/* Chat interface (shared with Materials) */}
+           <>
                 <div className="h-12 border-b border-gray-100 flex items-center justify-between px-4">
                     <span className="font-medium text-gray-900 text-sm">Chat</span>
                     <div className="flex items-center gap-3 text-gray-400">
@@ -3262,12 +3271,11 @@ const ProjectDetailView: React.FC<{
                         className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${isSendingChat || !chatInput.trim() ? 'bg-gray-200 text-white opacity-60 cursor-not-allowed' : 'bg-gray-900 text-white hover:bg-primary-500'}`}
                         title="Send (Ctrl/Cmd + Enter)"
                       >
-                          <ArrowRightIcon className="w-4 h-4 -rotate-90" />
+                      <ArrowRightIcon className="w-4 h-4 -rotate-90" />
                       </button>
                     </div>
                 </div>
-              </>
-           )}
+             </>
         </div>
       </div>
       
