@@ -1618,7 +1618,7 @@ const ContentRenderer: React.FC<{ item: ProjectItem | Material; isEditing: boole
 
 // ... (Rest of the file remains unchanged, including WorkPreviewView, ProjectDetailView, WorkspacePage) ...
 
-const WorkPreviewView: React.FC<{ work: Work; onBack: () => void }> = ({ work, onBack }) => {
+const WorkPreviewView: React.FC<{ work: Work; onBack: () => void; onSelectText?: () => void }> = ({ work, onBack, onSelectText }) => {
   const [showDropdown, setShowDropdown] = useState(false);
   const images = work.images || (work.imageUrl ? [work.imageUrl] : []);
 
@@ -1704,7 +1704,7 @@ const WorkPreviewView: React.FC<{ work: Work; onBack: () => void }> = ({ work, o
       </div>
 
       {/* Content Area */}
-      <div className="flex-1 overflow-y-auto p-12 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto p-12 custom-scrollbar" onMouseUp={onSelectText}>
          <div className="max-w-3xl mx-auto">
             <h1 className="text-4xl font-bold text-gray-900 mb-8">{work.title}</h1>
             {images.length > 0 && (
@@ -2696,7 +2696,7 @@ const ProjectDetailView: React.FC<{
           {activeTab === 'works' ? (
              selectedWork ? (
                 // --- WORK PREVIEW VIEW ---
-                <WorkPreviewView work={selectedWork} onBack={() => setSelectedWork(null)} />
+                <WorkPreviewView work={selectedWork} onBack={() => setSelectedWork(null)} onSelectText={handleTextMouseUp} />
              ) : selectedTemplate ? (
                // --- TEMPLATE DETAIL VIEW ---
                <div className="flex-1 flex flex-col items-center justify-center p-12 bg-white relative rounded-2xl">
