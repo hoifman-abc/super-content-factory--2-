@@ -153,9 +153,14 @@ The main interface is simple and clean. It focuses on life services and solving 
 interface Work {
   id: string;
   title: string;
-  type: 'Doc' | 'Slide' | 'Page';
+  type: 'Doc' | 'Slide' | 'Page' | SourceType;
   date: string;
   content?: string;
+  preview?: string;
+  imageUrl?: string;
+  mediaUrl?: string;
+  images?: string[];
+  sourceUrl?: string;
 }
 
 const MOCK_WORKS: Work[] = [
@@ -994,6 +999,10 @@ const getIconForWork = (type: string) => {
       case 'Doc': return <FileTextIcon className="w-5 h-5 text-gray-500" />;
       case 'Slide': return <ImageIcon className="w-5 h-5 text-gray-500" />;
       case 'Page': return <LayoutIcon className="w-5 h-5 text-gray-500" />;
+      case 'image': case 'Image': return <ImageIcon className="w-5 h-5 text-gray-500" />;
+      case 'video': case 'Video': return <PlayCircleIcon className="w-5 h-5 text-gray-500" />;
+      case 'pdf': case 'PDF': return <PdfIcon className="w-5 h-5 text-gray-500" />;
+      case 'text': case 'Note': return <FileTextIcon className="w-5 h-5 text-gray-500" />;
       default: return <FileTextIcon className="w-5 h-5" />;
     }
 };
@@ -1611,6 +1620,7 @@ const ContentRenderer: React.FC<{ item: ProjectItem | Material; isEditing: boole
 
 const WorkPreviewView: React.FC<{ work: Work; onBack: () => void }> = ({ work, onBack }) => {
   const [showDropdown, setShowDropdown] = useState(false);
+  const images = work.images || (work.imageUrl ? [work.imageUrl] : []);
 
   return (
     <div className="flex flex-col h-full bg-white relative rounded-2xl overflow-hidden shadow-sm">
@@ -1697,14 +1707,23 @@ const WorkPreviewView: React.FC<{ work: Work; onBack: () => void }> = ({ work, o
       <div className="flex-1 overflow-y-auto p-12 custom-scrollbar">
          <div className="max-w-3xl mx-auto">
             <h1 className="text-4xl font-bold text-gray-900 mb-8">{work.title}</h1>
+            {images.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+                {images.map((img, idx) => (
+                  <div key={idx} className="w-full h-56 bg-gray-50 rounded-xl overflow-hidden border border-gray-100">
+                    <img src={img} alt={`${work.title || 'Work'} image ${idx + 1}`} className="w-full h-full object-cover" />
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="prose prose-lg prose-gray max-w-none prose-p:leading-relaxed prose-headings:font-bold">
                {work.content ? (
                  work.content.split('\n').map((para, i) => (
                     <p key={i} className={para.startsWith('--') ? 'text-gray-400 text-sm' : ''}>{para}</p>
                  ))
-               ) : (
+               ) : images.length === 0 ? (
                  <p className="text-gray-400 italic">No content available for this preview.</p>
-               )}
+               ) : null}
             </div>
          </div>
       </div>
@@ -1715,11 +1734,13 @@ const WorkPreviewView: React.FC<{ work: Work; onBack: () => void }> = ({ work, o
 const ProjectDetailView: React.FC<{ 
   project: Project;
   projects: Project[]; 
+  works: Work[];
   initialMaterialId?: string;
   onBack: () => void;
   onSwitchProject: (p: Project) => void;
   onUpdateProject: (p: Project) => void;
-}> = ({ project, projects, initialMaterialId, onBack, onSwitchProject, onUpdateProject }) => {
+  onUpdateWorks: React.Dispatch<React.SetStateAction<Work[]>>;
+}> = ({ project, projects, works, initialMaterialId, onBack, onSwitchProject, onUpdateProject, onUpdateWorks }) => {
   const [selectedMaterial, setSelectedMaterial] = useState<Material | ProjectItem>(() => {
     if (initialMaterialId) {
        const found = MOCK_MATERIALS.find(m => m.id === initialMaterialId);
@@ -2016,6 +2037,7 @@ const ProjectDetailView: React.FC<{
       const modelId = selectedModel || OPENROUTER_FALLBACK_MODEL;
       const reply = await callOpenRouterChat(payloadHistory, modelId);
       setChatHistory(prev => [...prev, { role: 'assistant', content: reply }]);
+      addWorkFromContent(reply);
     } catch (err: any) {
       const msg = err?.message || '调用大模型失败';
       setChatError(msg);
@@ -2059,19 +2081,6 @@ const ProjectDetailView: React.FC<{
   };
 
   const handleSaveResponseToMaterials = (content: string) => {
-    const deriveTitleFromContent = (text: string) => {
-      const firstLine = (text || '')
-        .split(/\r?\n/)
-        .map(l => l.trim())
-        .find(l => l.length > 0) || '';
-      let cleaned = firstLine
-        .replace(/^#+\s*/, '')    // strip markdown heading markers
-        .replace(/^[-*•]\s*/, ''); // strip bullet markers
-      if (!cleaned) cleaned = 'Chat Response';
-      const maxLen = 80;
-      return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen)}...` : cleaned;
-    };
-
     const newItem: ProjectItem = {
       id: `chat-${Date.now()}`,
       type: 'text',
@@ -2215,6 +2224,40 @@ const ProjectDetailView: React.FC<{
     onUpdateProject(updatedProject);
     const updatedSelected = updatedItems.find(i => i.id === selectedMaterial.id);
     if (updatedSelected) setSelectedMaterial(updatedSelected);
+  };
+
+  const deriveTitleFromContent = (text: string) => {
+    const firstLine = (text || '')
+      .split(/\r?\n/)
+      .map(l => l.trim())
+      .find(l => l.length > 0) || '';
+    let cleaned = firstLine
+      .replace(/^#+\s*/, '')
+      .replace(/^[-*•]\s*/, '');
+    if (!cleaned) cleaned = 'Chat Response';
+    const maxLen = 80;
+    return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen)}...` : cleaned;
+  };
+
+  const extractFirstImage = (content: string): string | undefined => {
+    const match = content.match(/!\[[^\]]*]\(([^)]+)\)/);
+    return match ? match[1] : undefined;
+  };
+
+  const addWorkFromContent = (content: string) => {
+    const imageUrl = extractFirstImage(content);
+    const newWork: Work = {
+      id: `work-${Date.now()}`,
+      title: deriveTitleFromContent(content),
+      type: 'Page',
+      date: 'Just now',
+      content,
+      preview: content.substring(0, 100) + (content.length > 100 ? '...' : ''),
+      imageUrl,
+      images: imageUrl ? [imageUrl] : undefined,
+    };
+    onUpdateWorks(prev => [newWork, ...prev]);
+    setSelectedWork(newWork);
   };
 
   const handleTitleUpdate = (newTitle: string) => {
@@ -2464,7 +2507,7 @@ const ProjectDetailView: React.FC<{
           <div className="flex-1 overflow-y-auto px-2 space-y-1 pb-4 custom-scrollbar">
              {activeTab === 'works' ? (
                 // WORKS LIST
-                MOCK_WORKS.map(work => (
+                works.map(work => (
                    <div 
                      key={work.id} 
                      onClick={() => {
@@ -3043,7 +3086,7 @@ const ProjectDetailView: React.FC<{
                           {showRefPicker && (
                              <ChatReferencePicker 
                                 projects={projects}
-                                works={MOCK_WORKS}
+                                works={works}
                                 selectedIds={new Set(chatReferences.map(r => r.id))}
                                 onToggle={handleToggleReference}
                                 onClose={() => setShowRefPicker(false)}
@@ -3252,6 +3295,7 @@ export const WorkspacePage: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>(INITIAL_PROJECTS);
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [works, setWorks] = useState<Work[]>(MOCK_WORKS);
 
   const handleCreateProject = (name: string, icon: React.ReactNode) => {
     const newProject: Project = {
@@ -3277,9 +3321,11 @@ export const WorkspacePage: React.FC = () => {
       <ProjectDetailView 
         project={currentProject} 
         projects={projects}
+        works={works}
         onBack={() => setCurrentProject(null)}
         onSwitchProject={setCurrentProject}
         onUpdateProject={handleUpdateProject}
+        onUpdateWorks={setWorks}
       />
     );
   }
