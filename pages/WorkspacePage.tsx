@@ -1720,6 +1720,8 @@ const ProjectDetailView: React.FC<{
   const [chatInput, setChatInput] = useState('');
   const [isSendingChat, setIsSendingChat] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [copiedReplyIndex, setCopiedReplyIndex] = useState<number | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // New Note / Edit Mode State
   const [isEditing, setIsEditing] = useState(false);
@@ -1845,6 +1847,12 @@ const ProjectDetailView: React.FC<{
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [isResizingLeft, isResizingRight]);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
 
   // Close filter dropdown on outside click
   useEffect(() => {
@@ -2008,6 +2016,54 @@ const ProjectDetailView: React.FC<{
     }
 
     handleSendMessage(content);
+  };
+
+  const handleCopyResponse = (content: string, index: number) => {
+    navigator.clipboard.writeText(content);
+    setCopiedReplyIndex(index);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopiedReplyIndex(null), 1500);
+  };
+
+  const handleDownloadResponse = (content: string) => {
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'chat-response.txt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleSaveResponseToMaterials = (content: string) => {
+    const newItem: ProjectItem = {
+      id: `chat-${Date.now()}`,
+      type: 'text',
+      title: 'Chat Response',
+      preview: content.substring(0, 80) + (content.length > 80 ? '...' : ''),
+      timeAgo: 'Just now',
+      content
+    };
+
+    const updatedProject = { ...project, items: [newItem, ...project.items] };
+    onUpdateProject(updatedProject);
+  };
+
+  const handleClearChat = () => {
+    setChatHistory([]);
+    setChatInput('');
+    setChatError(null);
+    setIsSendingChat(false);
+  };
+
+  const handleNewChat = () => {
+    setChatHistory([]);
+    setChatInput('');
+    setChatError(null);
+    setIsSendingChat(false);
+    setChatReferences([]);
   };
 
   const handleTextMouseUp = () => {
@@ -2714,20 +2770,43 @@ const ProjectDetailView: React.FC<{
               <>
                 <div className="h-12 border-b border-gray-100 flex items-center justify-between px-4">
                     <span className="font-medium text-gray-900 text-sm">Chat</span>
-                    <div className="flex gap-3 text-gray-400">
-                      <RefreshCwIcon className="w-4 h-4 hover:text-gray-600 cursor-pointer" />
-                      <PlusIcon className="w-4 h-4 hover:text-gray-600 cursor-pointer" />
+                    <div className="flex items-center gap-3 text-gray-400">
+                      {isSendingChat && (
+                        <div className="flex items-center gap-1 text-xs text-gray-700 bg-gray-100 border border-gray-200 rounded-full px-2 py-1">
+                          <RefreshCwIcon className="w-3 h-3 animate-spin" />
+                          <span>助手正在工作</span>
+                        </div>
+                      )}
+                      <button 
+                        type="button"
+                        onClick={handleClearChat}
+                        className="p-1 rounded-full hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
+                        title="清空当前对话"
+                      >
+                        <RefreshCwIcon className="w-4 h-4" />
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={handleNewChat}
+                        className="p-1 rounded-full hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
+                        title="新建对话"
+                      >
+                        <PlusIcon className="w-4 h-4" />
+                      </button>
                     </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-gray-50/30 custom-scrollbar">
                     {/* Chat History Messages */}
-                    <div className="flex justify-end">
-                      <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-medium text-gray-700 shadow-sm cursor-pointer hover:bg-gray-50">
-                        <SparklesIcon className="w-3 h-3 text-purple-500" />
-                        Explain with Doodles
+                    {chatHistory.length === 0 && !isSendingChat && (
+                      <div className="flex flex-col items-center justify-center py-10 text-center text-gray-500 border border-dashed border-gray-200 rounded-2xl bg-white/60">
+                        <div className="w-12 h-12 rounded-2xl bg-gray-900 text-white flex items-center justify-center mb-3 shadow-sm">
+                          <LogoIcon className="w-6 h-6" />
+                        </div>
+                        <div className="text-base font-semibold text-gray-900">How can I help you?</div>
+                        <div className="text-sm text-gray-500 mt-1">Start a new conversation</div>
                       </div>
-                    </div>
+                    )}
 
                     {chatHistory.map((msg, idx) => (
                       <div key={idx} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
@@ -2761,8 +2840,39 @@ const ProjectDetailView: React.FC<{
                                     <div className="w-8 h-8 rounded-lg bg-green-500 flex items-center justify-center text-white shadow-sm flex-shrink-0">
                                         <MessageSquareIcon className="w-4 h-4" />
                                     </div>
-                                    <div className="bg-white p-3 rounded-2xl rounded-tl-sm shadow-sm border border-gray-100 text-sm text-gray-800 whitespace-pre-wrap">
-                                        {msg.content}
+                                    <div className="flex-1 flex flex-col gap-2">
+                                      <div className="bg-white p-3 rounded-2xl rounded-tl-sm shadow-sm border border-gray-100 text-sm text-gray-800 whitespace-pre-wrap">
+                                          {msg.content}
+                                      </div>
+                                      <div className="flex items-center gap-2 text-gray-500">
+                                        <button
+                                          type="button"
+                                          className="p-2 rounded-full hover:bg-gray-100 transition-colors"
+                                          title="Copy"
+                                          onClick={() => handleCopyResponse(msg.content, idx)}
+                                        >
+                                          <CopyIcon className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="p-2 rounded-full hover:bg-gray-100 transition-colors"
+                                          title="Download"
+                                          onClick={() => handleDownloadResponse(msg.content)}
+                                        >
+                                          <DownloadIcon className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="p-2 rounded-full hover:bg-gray-100 transition-colors"
+                                          title="Add to Library"
+                                          onClick={() => handleSaveResponseToMaterials(msg.content)}
+                                        >
+                                          <FolderPlusIcon className="w-4 h-4" />
+                                        </button>
+                                        {copiedReplyIndex === idx && (
+                                          <span className="text-xs text-green-600 ml-1">Copied</span>
+                                        )}
+                                      </div>
                                     </div>
                                 </div>
                             )
@@ -2770,12 +2880,22 @@ const ProjectDetailView: React.FC<{
                       </div>
                     ))}
                     
-                    <div className="flex items-center gap-2 mt-2">
-                      <button className="p-1 text-gray-400 hover:text-gray-600 bg-white border border-gray-200 rounded shadow-sm"><DownloadIcon className="w-3 h-3" /></button>
-                      <span className="text-xs bg-white border border-gray-200 px-2 py-1 rounded text-gray-500">Video to Article</span>
-                      <span className="text-xs bg-white border border-gray-200 px-2 py-1 rounded text-gray-500">Handwritten Notes 2.0</span>
-                      <button className="ml-auto p-1 text-gray-400 hover:text-gray-600"><MoreHorizontalIcon className="w-3 h-3" /></button>
-                    </div>
+                    {isSendingChat && (
+                      <div className="flex items-start gap-3 max-w-[90%] animate-in fade-in slide-in-from-bottom-1">
+                        <div className="w-8 h-8 rounded-lg bg-gray-900 flex items-center justify-center text-white shadow-sm flex-shrink-0">
+                          <SparklesIcon className="w-4 h-4" />
+                        </div>
+                        <div className="bg-gray-900 text-white p-3 rounded-2xl rounded-tl-sm shadow-sm border border-gray-800 text-sm flex items-center gap-2">
+                          <div className="flex gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-white/80 animate-bounce [animation-delay:-0.2s]"></span>
+                            <span className="w-1.5 h-1.5 rounded-full bg-white/70 animate-bounce"></span>
+                            <span className="w-1.5 h-1.5 rounded-full bg-white/60 animate-bounce [animation-delay:0.2s]"></span>
+                          </div>
+                          <span className="text-xs font-medium tracking-wide">正在处理你的请求...</span>
+                        </div>
+                      </div>
+                    )}
+                    
                 </div>
 
                 <div className="p-4 bg-white border-t border-gray-200">
@@ -2873,7 +2993,6 @@ const ProjectDetailView: React.FC<{
                         disabled={isSendingChat}
                       />
                       <div className="absolute right-2 bottom-2 flex items-center gap-1">
-                          <button className="p-1.5 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-200"><PaperclipIcon className="w-4 h-4" /></button>
                       </div>
                     </div>
                     {chatError && <div className="text-xs text-red-500 mt-1 px-1">⚠ {chatError}</div>}
