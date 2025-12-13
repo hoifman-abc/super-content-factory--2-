@@ -188,6 +188,12 @@ const MOCK_WORKS: Work[] = [
   { id: 'w5', title: 'Welcome to Super Content Factory', type: 'Page', date: 'Yesterday' },
 ];
 
+const WECHAT_ACCOUNTS = [
+  { id: 'wx-1', name: 'Daily Tech Studio' },
+  { id: 'wx-2', name: 'Growth Notes' },
+  { id: 'wx-3', name: 'Product Radar' },
+];
+
 interface Template {
   id: string;
   title: string;
@@ -1183,6 +1189,215 @@ const MoveToModal: React.FC<{
   );
 };
 
+const PublishModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  work: Work | null;
+}> = ({ isOpen, onClose, work }) => {
+  const [platform, setPlatform] = useState<'wechat' | 'xiaohongshu'>('wechat');
+  const [wechatType, setWechatType] = useState<'article' | 'greenbook'>('article');
+  const [accountId, setAccountId] = useState(WECHAT_ACCOUNTS[0]?.id || '');
+  const [title, setTitle] = useState(work?.title || '');
+  const [coverUrl, setCoverUrl] = useState(work?.imageUrl || work?.images?.[0] || '');
+  const [body, setBody] = useState(work?.content || '');
+  const [imageInput, setImageInput] = useState('');
+  const [images, setImages] = useState<string[]>(work?.images || (work?.imageUrl ? [work.imageUrl] : []));
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    setTitle(work?.title || '');
+    setCoverUrl(work?.imageUrl || work?.images?.[0] || '');
+    setBody(work?.content || '');
+    setImages(work?.images || (work?.imageUrl ? [work.imageUrl] : []));
+  }, [work?.id, work?.title, work?.imageUrl, work?.images, work?.content]);
+
+  if (!isOpen) return null;
+
+  const handleAddImage = () => {
+    const trimmed = imageInput.trim();
+    if (!trimmed) return;
+    setImages(prev => [...prev, trimmed]);
+    setImageInput('');
+  };
+
+  const handleRemoveImage = (idx: number) => {
+    setImages(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleSubmit = () => {
+    setIsSubmitting(true);
+    const payload = {
+      platform,
+      accountId: platform === 'wechat' ? accountId : null,
+      wechatType: platform === 'wechat' ? wechatType : null,
+      title: title.trim() || work?.title || '',
+      coverUrl: coverUrl.trim(),
+      body: body || '',
+      images,
+      workId: work?.id,
+    };
+    console.log('Publish payload (API TBD)', payload);
+    setTimeout(() => {
+      setIsSubmitting(false);
+      onClose();
+    }, 350);
+  };
+
+  const disablePublish = isSubmitting || !title.trim();
+
+  return (
+    <div className="fixed inset-0 z-[160] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/20 backdrop-blur-sm" onClick={onClose}></div>
+      <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 h-[640px] max-h-[80vh] flex flex-col">
+        <div className="flex items-center justify-between p-4 border-b border-gray-100">
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-gray-400">Publish</p>
+            <h3 className="text-lg font-bold text-gray-900">Publish {work?.title || 'this work'}</h3>
+          </div>
+          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg">
+            <XIcon className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-6 overflow-y-auto flex-1">
+          <div>
+            <p className="text-sm font-semibold text-gray-900 mb-3">选择发布平台</p>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => setPlatform('wechat')}
+                className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-colors ${platform === 'wechat' ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-200 hover:border-gray-300 text-gray-800'}`}
+              >
+                <WeChatIcon className="w-5 h-5" />
+                <div className="text-left">
+                  <div className="text-sm font-semibold">公众号</div>
+                  <div className="text-xs text-gray-400">文章 / 小绿书</div>
+                </div>
+              </button>
+              <button
+                onClick={() => setPlatform('xiaohongshu')}
+                className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-colors ${platform === 'xiaohongshu' ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-200 hover:border-gray-300 text-gray-800'}`}
+              >
+                <XiaohongshuIcon className="w-5 h-5" />
+                <div className="text-left">
+                  <div className="text-sm font-semibold">小红书</div>
+                  <div className="text-xs text-gray-400">图文/笔记</div>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {platform === 'wechat' && (
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">选择公众号</label>
+                <div className="mt-2 relative">
+                  <select
+                    value={accountId}
+                    onChange={e => setAccountId(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-gray-900 focus:outline-none bg-white"
+                  >
+                    {WECHAT_ACCOUNTS.map(acc => (
+                      <option key={acc.id} value={acc.id}>{acc.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">发布形式</label>
+                <div className="mt-2 flex items-center gap-2">
+                  {[
+                    { key: 'article', label: '文章' },
+                    { key: 'greenbook', label: '小绿书' }
+                  ].map(opt => (
+                    <button
+                      key={opt.key}
+                      onClick={() => setWechatType(opt.key as 'article' | 'greenbook')}
+                      className={`flex-1 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${wechatType === opt.key ? 'border-gray-900 text-gray-900 bg-gray-50' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div className="sm:col-span-2">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">发布标题</label>
+              <input
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                placeholder="请输入发布标题"
+                className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-gray-900 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">封面图（URL）</label>
+              <input
+                value={coverUrl}
+                onChange={e => setCoverUrl(e.target.value)}
+                placeholder="https://..."
+                className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-gray-900 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">正文图片（可选）</label>
+              <div className="mt-2 flex gap-2">
+                <input
+                  value={imageInput}
+                  onChange={e => setImageInput(e.target.value)}
+                  placeholder="图片链接"
+                  className="flex-1 border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-gray-900 focus:outline-none"
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddImage();
+                    }
+                  }}
+                />
+                <Button variant="secondary" onClick={handleAddImage}>添加</Button>
+              </div>
+              {images.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {images.map((img, idx) => (
+                    <span key={idx} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-gray-50 border border-gray-200 text-xs text-gray-700">
+                      <span className="truncate max-w-[160px]">{img}</span>
+                      <button onClick={() => handleRemoveImage(idx)} className="text-gray-400 hover:text-gray-600">
+                        <XIcon className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">正文</label>
+            <textarea
+              value={body}
+              onChange={e => setBody(e.target.value)}
+              rows={6}
+              placeholder="请输入正文，将用于公众号或小红书发布"
+              className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-gray-900 focus:outline-none resize-none"
+            />
+            <div className="text-xs text-gray-400 text-right mt-1">{(body || '').length} 字</div>
+          </div>
+        </div>
+
+        <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between bg-gray-50/50">
+          <div className="text-xs text-gray-500">前端占位，等待发布 API 对接。</div>
+          <div className="flex gap-3">
+            <Button variant="secondary" onClick={onClose}>取消</Button>
+            <Button onClick={handleSubmit} disabled={disablePublish}>{isSubmitting ? '发布中...' : '发布'}</Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 
 // --- CHAT REFERENCE PICKER ---
 
@@ -1621,9 +1836,11 @@ const ContentRenderer: React.FC<{ item: ProjectItem | Material; isEditing: boole
 const WorkPreviewView: React.FC<{ work: Work; onBack: () => void; onSelectText?: () => void }> = ({ work, onBack, onSelectText }) => {
   const [showDropdown, setShowDropdown] = useState(false);
   const images = work.images || (work.imageUrl ? [work.imageUrl] : []);
+  const [showPublishModal, setShowPublishModal] = useState(false);
 
   return (
-    <div className="flex flex-col h-full bg-white relative rounded-2xl overflow-hidden shadow-sm">
+    <>
+      <div className="flex flex-col h-full bg-white relative rounded-2xl overflow-hidden shadow-sm">
       {/* Work Header */}
       <div className="flex items-center justify-between p-4 border-b border-gray-100">
          <div className="flex items-center gap-3">
@@ -1648,7 +1865,10 @@ const WorkPreviewView: React.FC<{ work: Work; onBack: () => void; onSelectText?:
          </div>
 
          <div className="flex items-center gap-2 relative">
-             <button className="p-2 hover:bg-gray-100 rounded-lg text-gray-500">
+             <button 
+                className="p-2 hover:bg-gray-100 rounded-lg text-gray-500"
+                onClick={() => setShowPublishModal(true)}
+             >
                <ShareIcon className="w-5 h-5" />
              </button>
              <button 
@@ -1728,6 +1948,12 @@ const WorkPreviewView: React.FC<{ work: Work; onBack: () => void; onSelectText?:
          </div>
       </div>
     </div>
+      <PublishModal 
+        isOpen={showPublishModal} 
+        onClose={() => setShowPublishModal(false)} 
+        work={work} 
+      />
+    </>
   );
 };
 
