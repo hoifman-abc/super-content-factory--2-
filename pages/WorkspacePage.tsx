@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import * as ReactDOM from 'react-dom';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 // React 19 移除了默认导出的 findDOMNode，react-quill 仍在调用它，这里做一次兼容填补。
 // 仅用于获取编辑区域的实际 DOM 节点，不涉及生命周期。
@@ -417,6 +419,37 @@ const IMAGE_STYLES = [
   { id: 'cartoon', label: '卡通', img: 'https://images.unsplash.com/photo-1535930749574-1399327ce78f?w=150&q=80' },
   { id: 'pixel', label: '像素', img: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=150&q=80' },
 ];
+
+const MarkdownMessage: React.FC<{ content: string }> = ({ content }) => (
+  <div className="text-sm text-gray-800 leading-relaxed break-words space-y-2">
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        p: ({ node, ...props }) => <p className="mb-2 last:mb-0 leading-relaxed" {...props} />,
+        ul: ({ node, ...props }) => <ul className="list-disc pl-5 space-y-1 mb-2 last:mb-0" {...props} />,
+        ol: ({ node, ...props }) => <ol className="list-decimal pl-5 space-y-1 mb-2 last:mb-0" {...props} />,
+        li: ({ node, ...props }) => <li className="leading-relaxed" {...props} />,
+        a: ({ node, ...props }) => <a className="text-blue-600 underline break-words" target="_blank" rel="noopener noreferrer" {...props} />,
+        code({ inline, className, children, ...props }) {
+          if (inline) {
+            return <code className="bg-gray-100 px-1 py-0.5 rounded text-[13px]" {...props}>{children}</code>;
+          }
+          return (
+            <pre className="bg-gray-900 text-gray-100 rounded-lg p-3 overflow-x-auto text-xs" {...props}>
+              <code>{children}</code>
+            </pre>
+          );
+        },
+        blockquote: ({ node, ...props }) => <blockquote className="border-l-2 border-gray-200 pl-3 text-gray-700 italic mb-2 last:mb-0" {...props} />,
+        h1: ({ node, ...props }) => <h1 className="text-lg font-bold mt-2 mb-1" {...props} />,
+        h2: ({ node, ...props }) => <h2 className="text-base font-bold mt-2 mb-1" {...props} />,
+        h3: ({ node, ...props }) => <h3 className="text-sm font-semibold mt-2 mb-1" {...props} />
+      }}
+    >
+      {content || ''}
+    </ReactMarkdown>
+  </div>
+);
 
 const getModelIcon = (provider: string) => {
     switch (provider) {
@@ -1563,21 +1596,9 @@ const ContentRenderer: React.FC<{ item: ProjectItem | Material; isEditing: boole
                     dangerouslySetInnerHTML={{ __html: item.content }}
                  />
              ) : (
-                 <article className="prose prose-gray max-w-none prose-p:text-gray-700 prose-p:leading-loose prose-headings:font-bold prose-headings:text-gray-900">
-                    {(item.content || editContent).split('\n').map((para, i) => {
-                      // Custom Image Parser for simulated content
-                      if (para.trim().startsWith('{{IMG:') && para.trim().endsWith('}}')) {
-                          const imgUrl = para.trim().replace('{{IMG:', '').replace('}}', '');
-                          return (
-                            <div key={i} className="my-6">
-                               <img src={imgUrl} alt="Content" className="w-full rounded-xl shadow-sm" />
-                            </div>
-                          );
-                      }
-                      // Standard Paragraph
-                      return <p key={i}>{para}</p>;
-                    })}
-                 </article>
+                 <div className="prose prose-gray max-w-none prose-p:text-gray-700 prose-p:leading-loose prose-headings:font-bold prose-headings:text-gray-900">
+                    <MarkdownMessage content={(item.content || editContent || '').toString()} />
+                 </div>
              )}
            </>
          )}
@@ -1716,7 +1737,7 @@ const ProjectDetailView: React.FC<{
   const [showProjectDropdown, setShowProjectDropdown] = useState(false);
 
   // Chat History
-  const [chatHistory, setChatHistory] = useState<any[]>(CHAT_HISTORY);
+  const [chatHistory, setChatHistory] = useState<any[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [isSendingChat, setIsSendingChat] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
@@ -2038,10 +2059,23 @@ const ProjectDetailView: React.FC<{
   };
 
   const handleSaveResponseToMaterials = (content: string) => {
+    const deriveTitleFromContent = (text: string) => {
+      const firstLine = (text || '')
+        .split(/\r?\n/)
+        .map(l => l.trim())
+        .find(l => l.length > 0) || '';
+      let cleaned = firstLine
+        .replace(/^#+\s*/, '')    // strip markdown heading markers
+        .replace(/^[-*•]\s*/, ''); // strip bullet markers
+      if (!cleaned) cleaned = 'Chat Response';
+      const maxLen = 80;
+      return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen)}...` : cleaned;
+    };
+
     const newItem: ProjectItem = {
       id: `chat-${Date.now()}`,
       type: 'text',
-      title: 'Chat Response',
+      title: deriveTitleFromContent(content),
       preview: content.substring(0, 80) + (content.length > 80 ? '...' : ''),
       timeAgo: 'Just now',
       content
@@ -2811,11 +2845,11 @@ const ProjectDetailView: React.FC<{
                     {chatHistory.map((msg, idx) => (
                       <div key={idx} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                           {msg.role === 'user' ? (
-                            <div className="bg-white p-3 rounded-2xl rounded-tr-sm shadow-sm border border-gray-100 text-sm text-gray-800 max-w-[90%] mb-1 whitespace-pre-wrap">
+                            <div className="bg-white p-3 rounded-2xl rounded-tr-sm shadow-sm border border-gray-100 text-sm text-gray-800 max-w-[90%] mb-1">
                                 <div className="flex items-center gap-1 mb-1 text-purple-500">
                                   <SparklesIcon className="w-3 h-3" />
                                 </div>
-                                {msg.content}
+                                <MarkdownMessage content={msg.content} />
                             </div>
                           ) : (
                             msg.type === 'error' ? (
@@ -2841,8 +2875,8 @@ const ProjectDetailView: React.FC<{
                                         <MessageSquareIcon className="w-4 h-4" />
                                     </div>
                                     <div className="flex-1 flex flex-col gap-2">
-                                      <div className="bg-white p-3 rounded-2xl rounded-tl-sm shadow-sm border border-gray-100 text-sm text-gray-800 whitespace-pre-wrap">
-                                          {msg.content}
+                                      <div className="bg-white p-3 rounded-2xl rounded-tl-sm shadow-sm border border-gray-100 text-sm text-gray-800">
+                                          <MarkdownMessage content={msg.content} />
                                       </div>
                                       <div className="flex items-center gap-2 text-gray-500">
                                         <button
