@@ -2702,7 +2702,10 @@ const ProjectDetailView: React.FC<{
                <div className="flex-1 flex flex-col items-center justify-center p-12 bg-white relative rounded-2xl">
                   {/* ... (Template View Content) ... */}
                   <div className="w-full max-w-lg">
-                      <button onClick={() => setSelectedTemplate(null)} className="absolute top-6 left-6 p-2 rounded-full hover:bg-gray-100 text-gray-500 lg:hidden">
+                      <button 
+                        onClick={() => { setSelectedTemplate(null); setWorksListMode('works'); }} 
+                        className="absolute top-6 left-6 p-2 rounded-full hover:bg-gray-100 text-gray-500 lg:hidden"
+                      >
                         <ArrowRightIcon className="w-5 h-5 rotate-180" />
                       </button>
                       <div className="flex flex-col items-center text-center">
@@ -2718,7 +2721,14 @@ const ProjectDetailView: React.FC<{
                               <span className="font-medium">Selected materials: <span className="font-bold">{selectedContextIds.size}</span></span>
                           </div>
                           <div className="flex items-center gap-4 w-full">
-                              <Button variant="secondary" size="lg" className="flex-1 rounded-full border-gray-300 py-3" onClick={() => setSelectedTemplate(null)}>Cancel</Button>
+                              <Button 
+                                variant="secondary" 
+                                size="lg" 
+                                className="flex-1 rounded-full border-gray-300 py-3" 
+                                onClick={() => { setSelectedTemplate(null); setWorksListMode('works'); }}
+                              >
+                                Cancel
+                              </Button>
                               <Button variant="primary" size="lg" className="flex-1 rounded-full bg-black hover:bg-gray-800 py-3 gap-2 shadow-lg" onClick={() => { /* Generate Action */ }}>
                                 <SparklesIcon className="w-5 h-5" /> Generate
                               </Button>
