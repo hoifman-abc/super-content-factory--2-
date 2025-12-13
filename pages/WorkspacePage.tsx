@@ -432,6 +432,80 @@ const getModelIcon = (provider: string) => {
     }
 };
 
+// --- OpenRouter Helpers for Gemini ---
+const OPENROUTER_BASE_URL = import.meta.env.VITE_OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
+const OPENROUTER_SITE_URL = import.meta.env.VITE_OPENROUTER_SITE_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+// Default to a currently-listed Gemini model on OpenRouter to avoid 400s from deprecated IDs
+const OPENROUTER_FALLBACK_MODEL = import.meta.env.VITE_OPENROUTER_MODEL || 'google/gemini-2.5-flash';
+
+// 1) 内置少量常用映射；2) 支持通过 env 为任意模型覆盖：VITE_OPENROUTER_MODEL_MAP__<MODEL_ID_IN_UPPERCASE_WITH_UNDERSCORES>
+const OPENROUTER_MODEL_MAP: Record<string, string> = {
+  'gemini-2.5-flash': 'google/gemini-2.5-flash',
+  'gemini-2.5-pro': 'google/gemini-2.5-pro',
+  // 如果你有 Gemini 3 Pro 权限，在 .env.local 设置 VITE_OPENROUTER_GEMINI3_ID 或 VITE_OPENROUTER_MODEL_MAP__GEMINI_3_PRO
+  'gemini-3-pro': import.meta.env.VITE_OPENROUTER_GEMINI3_ID || 'google/gemini-3-pro-preview',
+  // OpenAI
+  'gpt-4o': 'openai/gpt-4o',
+  'gpt-5': 'openai/gpt-5',
+  'gpt-5.1': 'openai/gpt-5.1',
+  'gpt-5.2': 'openai/gpt-5.2',
+  // Anthropic
+  'claude-sonnet-4.5': 'anthropic/claude-sonnet-4.5',
+  'claude-sonnet-4.5-thinking': 'anthropic/claude-sonnet-4.5:thinking',
+  'claude-sonnet-3.7-thinking': 'anthropic/claude-3.7-sonnet:thinking',
+  'claude-opus-4.5': 'anthropic/claude-opus-4.5'
+};
+
+const envOverrideKey = (id: string) => `VITE_OPENROUTER_MODEL_MAP__${id.replace(/[-.]/g, '_').toUpperCase()}`;
+
+const resolveOpenRouterModel = (selectedModelId: string) => {
+  if (!selectedModelId) return OPENROUTER_FALLBACK_MODEL;
+  const envOverride = import.meta.env[envOverrideKey(selectedModelId)];
+  if (envOverride) return envOverride;
+  if (OPENROUTER_MODEL_MAP[selectedModelId]) return OPENROUTER_MODEL_MAP[selectedModelId];
+  return selectedModelId; // assume caller already passed a valid OpenRouter model id
+};
+
+const callOpenRouterChat = async (
+  messages: { role: string; content: string }[],
+  modelId: string
+): Promise<string> => {
+  const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error('缺少 OpenRouter Key，请在 .env.local 设置 VITE_OPENROUTER_API_KEY');
+  }
+
+  const resolvedModel = resolveOpenRouterModel(modelId);
+  const finalModel = resolvedModel && resolvedModel.includes('/') ? resolvedModel : OPENROUTER_FALLBACK_MODEL;
+
+  const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+      // OpenRouter 推荐的标识头，方便在仪表盘里看到来源
+      'HTTP-Referer': OPENROUTER_SITE_URL,
+      'X-Title': 'Super Content Factory'
+    },
+    body: JSON.stringify({
+      model: finalModel || OPENROUTER_FALLBACK_MODEL,
+      messages: messages.map(m => ({ role: m.role, content: m.content })),
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenRouter 接口错误 ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error('OpenRouter 没有返回内容');
+  }
+  return content.trim();
+};
+
 // --- REAL BACKEND API IMPLEMENTATION ---
 // Normalize WeChat HTML so images show up (WeChat puts real URLs in data-src)
 const cleanWeChatHtml = (html: string) => {
@@ -1643,6 +1717,9 @@ const ProjectDetailView: React.FC<{
 
   // Chat History
   const [chatHistory, setChatHistory] = useState<any[]>(CHAT_HISTORY);
+  const [chatInput, setChatInput] = useState('');
+  const [isSendingChat, setIsSendingChat] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
 
   // New Note / Edit Mode State
   const [isEditing, setIsEditing] = useState(false);
@@ -1831,6 +1908,94 @@ const ProjectDetailView: React.FC<{
     setChatReferences(prev => prev.filter(i => i.id !== id));
   };
 
+  // 将卡片对应的内容整理为可发给模型的文本/文件（前端不变，只是在发送时打包）
+  const readFileAsBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.includes(',') ? result.split(',')[1] : result;
+        resolve(base64);
+      };
+      reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const buildAttachmentText = async (
+    refs: (ProjectItem | Work | LocalFileItem | Material | TextSelectionItem)[]
+  ): Promise<string> => {
+    if (!refs || refs.length === 0) return '';
+
+    const attachments = await Promise.all(refs.map(async (ref) => {
+      const base: any = {
+        id: (ref as any).id,
+        type: (ref as any).type,
+        title: (ref as any).title || (ref as any).name || 'Untitled',
+        sourceUrl: (ref as any).sourceUrl,
+        mediaUrl: (ref as any).mediaUrl,
+        images: (ref as any).images,
+        preview: (ref as any).preview,
+        content: (ref as any).content,
+      };
+
+      if ((ref as any).type === 'local-file' && (ref as LocalFileItem).file) {
+        const file = (ref as LocalFileItem).file;
+        const base64 = await readFileAsBase64(file);
+        return {
+          ...base,
+          file: {
+            name: file.name,
+            mimeType: file.type || 'application/octet-stream',
+            size: file.size,
+            base64,
+          },
+        };
+      }
+
+      return base;
+    }));
+
+    return `附件列表（请作为上下文使用）：\n${JSON.stringify(attachments, null, 2)}`;
+  };
+
+  const handleSendMessage = async (messageOverride?: string) => {
+    if (selectedAgentMode === 'image') {
+      setChatError('图片模型无法用于文本对话，请选择 Ask/Write 模式');
+      return;
+    }
+
+    const messageToSend = (messageOverride ?? chatInput).trim();
+    if (!messageToSend) return;
+
+    const userMsg = { role: 'user', content: messageToSend };
+    const newHistory = [...chatHistory, userMsg];
+    setChatHistory(newHistory);
+    if (!messageOverride) setChatInput('');
+    setChatError(null);
+    setIsSendingChat(true);
+
+    try {
+      const attachmentText = await buildAttachmentText(chatReferences);
+      const payloadHistory = [...chatHistory];
+      if (attachmentText) {
+        // 单独一条消息承载附件内容，避免影响用户原始输入
+        payloadHistory.push({ role: 'user', content: attachmentText });
+      }
+      payloadHistory.push(userMsg);
+
+      const modelId = selectedModel || OPENROUTER_FALLBACK_MODEL;
+      const reply = await callOpenRouterChat(payloadHistory, modelId);
+      setChatHistory(prev => [...prev, { role: 'assistant', content: reply }]);
+    } catch (err: any) {
+      const msg = err?.message || '调用大模型失败';
+      setChatError(msg);
+      setChatHistory(prev => [...prev, { role: 'system', type: 'error', content: msg }]);
+    } finally {
+      setIsSendingChat(false);
+    }
+  };
+
   const handleShortcut = (cmd: typeof SHORTCUT_COMMANDS[0]) => {
     let content = cmd.prompt;
     if (chatReferences.length > 0) {
@@ -1842,15 +2007,7 @@ const ProjectDetailView: React.FC<{
         content += `\n\n(References: ${refTitles})`;
     }
 
-    const userMsg = { role: 'user', content: content };
-    setChatHistory(prev => [...prev, userMsg]);
-
-    setTimeout(() => {
-        setChatHistory(prev => [...prev, {
-            role: 'assistant',
-            content: `Here is the ${cmd.label} based on your request... \n\n(AI generated content placeholder for ${chatReferences.length} items)`
-        }]);
-    }, 800);
+    handleSendMessage(content);
   };
 
   const handleTextMouseUp = () => {
@@ -2705,11 +2862,21 @@ const ProjectDetailView: React.FC<{
                         placeholder="Describe a task" 
                         className="w-full pl-4 pr-10 py-3 bg-gray-50 border-none rounded-xl text-sm focus:ring-1 focus:ring-gray-200 focus:bg-white transition-colors resize-none"
                         rows={3}
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                            e.preventDefault();
+                            handleSendMessage();
+                          }
+                        }}
+                        disabled={isSendingChat}
                       />
                       <div className="absolute right-2 bottom-2 flex items-center gap-1">
                           <button className="p-1.5 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-200"><PaperclipIcon className="w-4 h-4" /></button>
                       </div>
                     </div>
+                    {chatError && <div className="text-xs text-red-500 mt-1 px-1">⚠ {chatError}</div>}
                     <div className="flex items-center justify-between mt-3">
                       <div className="flex items-center gap-2 relative">
                           <button 
@@ -2893,7 +3060,12 @@ const ProjectDetailView: React.FC<{
                           )}
 
                       </div>
-                      <button className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-200 text-white hover:bg-primary-500 transition-colors">
+                      <button 
+                        onClick={() => handleSendMessage()}
+                        disabled={isSendingChat || !chatInput.trim()}
+                        className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${isSendingChat || !chatInput.trim() ? 'bg-gray-200 text-white opacity-60 cursor-not-allowed' : 'bg-gray-900 text-white hover:bg-primary-500'}`}
+                        title="Send (Ctrl/Cmd + Enter)"
+                      >
                           <ArrowRightIcon className="w-4 h-4 -rotate-90" />
                       </button>
                     </div>
