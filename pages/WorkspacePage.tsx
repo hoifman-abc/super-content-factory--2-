@@ -38,6 +38,7 @@ import {
   QuoteIcon, WeChatIcon, XiaohongshuIcon, YouTubeIcon, DouyinIcon, BilibiliIcon
 } from '../components/Icons';
 import { Link } from 'react-router-dom';
+import XhsLongImageTool from './XhsLongImageTool';
 
 // Quill toolbar configuration for richer note editing
 const QUILL_MODULES = {
@@ -64,6 +65,7 @@ const QUILL_FORMATS = [
 // --- SHARED TYPES & MOCK DATA (For Editor) ---
 
 type SourceType = 'Web' | 'PDF' | 'Note' | 'Video' | 'Image' | 'xiaohongshu' | 'link' | 'folder' | 'text' | 'image' | 'video' | 'pdf' | 'article';
+type LongFormAspect = '3:4' | '16:9' | '1:1';
 
 interface Material {
   id: string;
@@ -161,6 +163,7 @@ interface Work {
   mediaUrl?: string;
   images?: string[];
   sourceUrl?: string;
+  publishedTo?: string[];
 }
 
 const MOCK_WORKS: Work[] = [
@@ -189,10 +192,66 @@ const MOCK_WORKS: Work[] = [
 ];
 
 const WECHAT_ACCOUNTS = [
-  { id: 'wx-1', name: 'Daily Tech Studio' },
-  { id: 'wx-2', name: 'Growth Notes' },
-  { id: 'wx-3', name: 'Product Radar' },
+  { id: 'wx-1', name: 'Daily Tech Studio', wechatAppid: 'wx-1' },
+  { id: 'wx-2', name: 'Growth Notes', wechatAppid: 'wx-2' },
+  { id: 'wx-3', name: 'Product Radar', wechatAppid: 'wx-3' },
 ];
+
+interface WechatAccount {
+  name: string;
+  wechatAppid: string;
+  username: string;
+  avatar?: string;
+  type?: string;
+  verified?: boolean;
+  status?: string;
+}
+
+const WECHAT_OPENAPI_BASE = 'https://wx.limyai.com/api/openapi';
+const WECHAT_OPENAPI_KEY = (import.meta as any)?.env?.VITE_WECHAT_OPENAPI_KEY || (import.meta as any)?.env?.VITE_WECHAT_API_KEY || '';
+
+const postWechat = async (path: string, payload: any) => {
+  if (!WECHAT_OPENAPI_KEY) {
+    throw new Error('缺少微信开放平台 API Key');
+  }
+
+  const res = await fetch(`${WECHAT_OPENAPI_BASE}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': WECHAT_OPENAPI_KEY,
+    },
+    body: JSON.stringify(payload || {}),
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.success === false) {
+    const message = data?.error || data?.message || res.statusText || '请求失败';
+    const code = data?.code;
+    throw new Error(code ? `${code}: ${message}` : message);
+  }
+  return data;
+};
+
+const fetchWechatAccounts = async (): Promise<WechatAccount[]> => {
+  const data = await postWechat('/wechat-accounts', {});
+  return data?.data?.accounts || [];
+};
+
+type PublishWechatPayload = {
+  wechatAppid: string;
+  title: string;
+  content: string;
+  summary?: string;
+  coverImage?: string;
+  author?: string;
+  contentFormat?: 'markdown' | 'html';
+  articleType?: 'news' | 'newspic';
+};
+
+const publishWechatArticle = async (payload: PublishWechatPayload) => {
+  return await postWechat('/wechat-publish', payload);
+};
 
 interface Template {
   id: string;
@@ -201,6 +260,8 @@ interface Template {
   icon: React.ReactNode;
   color: string;
   tag: string;
+  defaultPrompt?: string;
+  accent?: string;
 }
 
 const CREATION_TEMPLATES: Template[] = [
@@ -208,25 +269,41 @@ const CREATION_TEMPLATES: Template[] = [
     id: 't1', 
     title: 'Briefing digest', 
     description: 'Overview of selected materials featuring key insights and highlights.', 
-    icon: <FileTextIcon className="w-8 h-8 text-blue-500" />,
+    icon: <FileTextIcon className="w-5 h-5 text-blue-600" />,
     color: 'border-l-4 border-l-blue-400',
-    tag: 'Page'
+    tag: 'Page',
+    accent: 'bg-blue-50 text-blue-700',
+    defaultPrompt: 'Summarize selected materials into a concise briefing with key insights and highlights.'
   },
   { 
     id: 't2', 
     title: 'Blog post', 
     description: 'Insight-driven blog article highlighting surprising or counter-intuitive points.', 
-    icon: <PenToolIcon className="w-8 h-8 text-purple-500" />,
+    icon: <PenToolIcon className="w-5 h-5 text-purple-600" />,
     color: 'border-l-4 border-l-purple-400',
-    tag: 'Page'
+    tag: 'Page',
+    accent: 'bg-purple-50 text-purple-700',
+    defaultPrompt: 'Write a blog post emphasizing surprising, counter-intuitive insights with engaging storytelling.'
   },
   { 
     id: 't3', 
     title: 'Research guide', 
     description: 'Generate an insightful research guide based on the selected materials.', 
-    icon: <DatabaseIcon className="w-8 h-8 text-indigo-500" />,
+    icon: <DatabaseIcon className="w-5 h-5 text-indigo-600" />,
     color: 'border-l-4 border-l-indigo-400',
-    tag: 'Page'
+    tag: 'Page',
+    accent: 'bg-indigo-50 text-indigo-700',
+    defaultPrompt: 'Create a structured research guide with objectives, scope, key sources, and next steps.'
+  },
+  { 
+    id: 't-longform-image', 
+    title: '长图文生成', 
+    description: '根据选中资料生成长图文，内置 3:4 / 16:9 / 1:1 默认尺寸，模板位预留待接入。', 
+    icon: <LayoutIcon className="w-5 h-5 text-emerald-600" />,
+    color: 'border-l-4 border-l-emerald-400',
+    tag: 'Image',
+    accent: 'bg-emerald-50 text-emerald-700',
+    defaultPrompt: '生成一组长图文，突出关键信息、段落摘要和视觉要点，可选 3:4 / 16:9 / 1:1 尺寸。'
   }
 ];
 
@@ -429,6 +506,12 @@ const IMAGE_STYLES = [
   { id: 'pixar', label: '皮克斯', img: 'https://images.unsplash.com/photo-1633469924738-52101af51d87?w=150&q=80' },
   { id: 'cartoon', label: '卡通', img: 'https://images.unsplash.com/photo-1535930749574-1399327ce78f?w=150&q=80' },
   { id: 'pixel', label: '像素', img: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=150&q=80' },
+];
+
+const LONGFORM_ASPECTS: { id: LongFormAspect; label: string; hint: string }[] = [
+  { id: '3:4', label: '3:4', hint: '竖版' },
+  { id: '16:9', label: '16:9', hint: '横版' },
+  { id: '1:1', label: '1:1', hint: '正方形' },
 ];
 
 const MarkdownMessage: React.FC<{ content: string }> = ({ content }) => (
@@ -1193,16 +1276,22 @@ const PublishModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
   work: Work | null;
-}> = ({ isOpen, onClose, work }) => {
+  onPublished?: (info: { platform: 'wechat'; wechatAppid: string; articleType: 'news' | 'newspic'; truncated?: boolean }) => void;
+}> = ({ isOpen, onClose, work, onPublished }) => {
   const [platform, setPlatform] = useState<'wechat' | 'xiaohongshu'>('wechat');
   const [wechatType, setWechatType] = useState<'article' | 'greenbook'>('article');
-  const [accountId, setAccountId] = useState(WECHAT_ACCOUNTS[0]?.id || '');
+  const [accountId, setAccountId] = useState(WECHAT_ACCOUNTS[0]?.wechatAppid || '');
   const [title, setTitle] = useState(work?.title || '');
   const [coverUrl, setCoverUrl] = useState(work?.imageUrl || work?.images?.[0] || '');
   const [body, setBody] = useState(work?.content || '');
   const [imageInput, setImageInput] = useState('');
   const [images, setImages] = useState<string[]>(work?.images || (work?.imageUrl ? [work.imageUrl] : []));
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [accounts, setAccounts] = useState<WechatAccount[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [accountsError, setAccountsError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     setTitle(work?.title || '');
@@ -1210,6 +1299,24 @@ const PublishModal: React.FC<{
     setBody(work?.content || '');
     setImages(work?.images || (work?.imageUrl ? [work.imageUrl] : []));
   }, [work?.id, work?.title, work?.imageUrl, work?.images, work?.content]);
+
+  useEffect(() => {
+    if (!isOpen || platform !== 'wechat') return;
+    if (accounts.length > 0 || accountsLoading) return;
+    setAccountsLoading(true);
+    setAccountsError(null);
+    fetchWechatAccounts()
+      .then(list => {
+        setAccounts(list);
+        if (list.length > 0) {
+          setAccountId(list[0].wechatAppid);
+        }
+      })
+      .catch((err: any) => {
+        setAccountsError(err?.message || '获取公众号列表失败');
+      })
+      .finally(() => setAccountsLoading(false));
+  }, [isOpen, platform, accounts.length, accountsLoading]);
 
   if (!isOpen) return null;
 
@@ -1224,23 +1331,77 @@ const PublishModal: React.FC<{
     setImages(prev => prev.filter((_, i) => i !== idx));
   };
 
-  const handleSubmit = () => {
-    setIsSubmitting(true);
-    const payload = {
-      platform,
-      accountId: platform === 'wechat' ? accountId : null,
-      wechatType: platform === 'wechat' ? wechatType : null,
-      title: title.trim() || work?.title || '',
-      coverUrl: coverUrl.trim(),
-      body: body || '',
-      images,
-      workId: work?.id,
+  const handleSubmit = async () => {
+    setSubmitError(null);
+    setNotice(null);
+
+    if (platform !== 'wechat') {
+      setSubmitError('当前仅接入公众号发布，其他平台待接入');
+      return;
+    }
+
+    if (!accountId) {
+      setSubmitError('请选择公众号');
+      return;
+    }
+
+    const trimmedTitle = (title || '').trim();
+    if (!trimmedTitle) {
+      setSubmitError('请填写标题');
+      return;
+    }
+
+    const safeTitle = trimmedTitle.slice(0, 64);
+    const wechatAppid = accountId;
+
+    let finalBody = (body || '').trim();
+    let truncated = false;
+
+    if (wechatType === 'greenbook') {
+      if (!images || images.length === 0) {
+        setSubmitError('小绿书至少需要1张图片');
+        return;
+      }
+      if (finalBody.length > 1000) {
+        finalBody = finalBody.slice(0, 1000);
+        truncated = true;
+      }
+      // 确保图片出现在内容中
+      const missingMd = images.filter(img => !finalBody.includes(img)).map(img => `![image](${img})`);
+      if (missingMd.length > 0) {
+        finalBody = `${finalBody ? `${finalBody}\n\n` : ''}${missingMd.join('\n')}`;
+      }
+    }
+
+    const summary = finalBody ? finalBody.slice(0, 120) : undefined;
+    const articleType: 'news' | 'newspic' = wechatType === 'greenbook' ? 'newspic' : 'news';
+
+    const payload: PublishWechatPayload = {
+      wechatAppid,
+      title: safeTitle,
+      content: finalBody || (work?.content || ''),
+      summary,
+      coverImage: coverUrl.trim() || undefined,
+      contentFormat: 'markdown',
+      articleType,
     };
-    console.log('Publish payload (API TBD)', payload);
-    setTimeout(() => {
-      setIsSubmitting(false);
+
+    setIsSubmitting(true);
+    try {
+      await publishWechatArticle(payload);
+      if (truncated) {
+        setNotice('正文超过1000字，已自动截断后发布');
+      }
+      alert('发布成功，已提交到公众号草稿箱');
+      onPublished?.({ platform: 'wechat', wechatAppid, articleType, truncated });
       onClose();
-    }, 350);
+    } catch (err: any) {
+      const msg = err?.message || '发布失败，请稍后重试';
+      setSubmitError(msg);
+      alert(`发布失败：${msg}`);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const disablePublish = isSubmitting || !title.trim();
@@ -1294,12 +1455,21 @@ const PublishModal: React.FC<{
                   <select
                     value={accountId}
                     onChange={e => setAccountId(e.target.value)}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-gray-900 focus:outline-none bg-white"
+                    disabled={accountsLoading || !!accountsError}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-gray-900 focus:outline-none bg-white disabled:bg-gray-50 disabled:text-gray-400"
                   >
-                    {WECHAT_ACCOUNTS.map(acc => (
-                      <option key={acc.id} value={acc.id}>{acc.name}</option>
+                    {(accounts.length > 0 ? accounts : WECHAT_ACCOUNTS).map(acc => (
+                      <option key={acc.wechatAppid || acc.id} value={acc.wechatAppid || acc.id}>
+                        {acc.name}
+                      </option>
                     ))}
                   </select>
+                  {accountsLoading && <p className="text-[11px] text-gray-400 mt-1">加载公众号列表...</p>}
+                  {accountsError && (
+                    <div className="text-[11px] text-red-500 mt-1">
+                      {accountsError} <button className="underline" onClick={() => { setAccounts([]); setAccountsLoading(false); setAccountsError(null); }}>重试</button>
+                    </div>
+                  )}
                 </div>
               </div>
               <div>
@@ -1387,7 +1557,10 @@ const PublishModal: React.FC<{
         </div>
 
         <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between bg-gray-50/50">
-          <div className="text-xs text-gray-500">前端占位，等待发布 API 对接。</div>
+          <div className="text-xs text-gray-500">
+            {notice || '发布到公众号草稿箱（API已接入）。'}
+            {submitError && <span className="text-red-500 ml-2">{submitError}</span>}
+          </div>
           <div className="flex gap-3">
             <Button variant="secondary" onClick={onClose}>取消</Button>
             <Button onClick={handleSubmit} disabled={disablePublish}>{isSubmitting ? '发布中...' : '发布'}</Button>
@@ -1833,7 +2006,7 @@ const ContentRenderer: React.FC<{ item: ProjectItem | Material; isEditing: boole
 
 // ... (Rest of the file remains unchanged, including WorkPreviewView, ProjectDetailView, WorkspacePage) ...
 
-const WorkPreviewView: React.FC<{ work: Work; onBack: () => void; onSelectText?: () => void }> = ({ work, onBack, onSelectText }) => {
+const WorkPreviewView: React.FC<{ work: Work; onBack: () => void; onSelectText?: () => void; onPublished?: (workId: string, info: { platform: 'wechat'; wechatAppid: string; articleType: 'news' | 'newspic'; truncated?: boolean }) => void }> = ({ work, onBack, onSelectText, onPublished }) => {
   const [showDropdown, setShowDropdown] = useState(false);
   const images = work.images || (work.imageUrl ? [work.imageUrl] : []);
   const [showPublishModal, setShowPublishModal] = useState(false);
@@ -1952,6 +2125,7 @@ const WorkPreviewView: React.FC<{ work: Work; onBack: () => void; onSelectText?:
         isOpen={showPublishModal} 
         onClose={() => setShowPublishModal(false)} 
         work={work} 
+        onPublished={(info) => onPublished?.(work.id, info)}
       />
     </>
   );
@@ -1983,6 +2157,29 @@ const ProjectDetailView: React.FC<{
   const [selectedWork, setSelectedWork] = useState<Work | null>(null);
   const [showProjectDropdown, setShowProjectDropdown] = useState(false);
   const [worksListMode, setWorksListMode] = useState<'works' | 'materials'>('works');
+  const [selectedWorkIds, setSelectedWorkIds] = useState<Set<string>>(new Set());
+  const [templatePrompts, setTemplatePrompts] = useState<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    CREATION_TEMPLATES.forEach(t => {
+      map[t.id] = t.defaultPrompt || t.description;
+    });
+    return map;
+  });
+  const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
+  const [editingPrompt, setEditingPrompt] = useState('');
+  const [showLongformTool, setShowLongformTool] = useState(false);
+  const [longformContext, setLongformContext] = useState<{ ratio?: string; prompt?: string; selectedMaterialIds: string[]; selectedWorkIds: string[] }>({
+    ratio: '3:4',
+    prompt: '',
+    selectedMaterialIds: [],
+    selectedWorkIds: []
+  });
+
+  const handleCloseLongformTool = () => {
+    setShowLongformTool(false);
+    setSelectedTemplate(null);
+    setWorksListMode('works');
+  };
 
   // Chat History
   const [chatHistory, setChatHistory] = useState<any[]>([]);
@@ -2019,6 +2216,7 @@ const ProjectDetailView: React.FC<{
   const [imageStyle, setImageStyle] = useState('ghibli');
   const [showImageStyleSelector, setShowImageStyleSelector] = useState(false);
   const imageStyleSelectorRef = useRef<HTMLDivElement>(null);
+  const [longFormAspect, setLongFormAspect] = useState<LongFormAspect>('3:4');
 
   // Material Context Menu State
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -2130,6 +2328,22 @@ const ProjectDetailView: React.FC<{
     }
   }, [activeTab]);
 
+  useEffect(() => {
+    if (selectedTemplate?.id === 't-longform-image') {
+      setLongFormAspect('3:4');
+      setWorksListMode('works');
+      setSelectedWorkIds(new Set());
+      setChatReferences([]);
+      setSelectedWork(null);
+    }
+  }, [selectedTemplate?.id]);
+
+  useEffect(() => {
+    if (editingTemplate) {
+      setEditingPrompt(templatePrompts[editingTemplate.id] || editingTemplate.defaultPrompt || '');
+    }
+  }, [editingTemplate, templatePrompts]);
+
   // Close filter dropdown on outside click
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -2169,12 +2383,42 @@ const ProjectDetailView: React.FC<{
     setSelectedContextIds(newSet);
   };
 
+  const toggleWorkSelection = (work: Work) => {
+    setSelectedWorkIds(prev => {
+      const next = new Set(prev);
+      if (next.has(work.id)) {
+        next.delete(work.id);
+      } else {
+        next.add(work.id);
+      }
+      const refs = works.filter(w => next.has(w.id));
+      setChatReferences(refs);
+      return next;
+    });
+  };
+
   const toggleSelectAll = () => {
     if (selectedContextIds.size === MOCK_MATERIALS.length) {
       setSelectedContextIds(new Set());
     } else {
       setSelectedContextIds(new Set(MOCK_MATERIALS.map(m => m.id)));
     }
+  };
+
+  const handleGenerateTemplate = () => {
+    if (!selectedTemplate) return;
+    if (selectedTemplate.id === 't-longform-image') {
+      const state = {
+        ratio: longFormAspect,
+        prompt: templatePrompts[selectedTemplate.id] || selectedTemplate.description,
+        selectedMaterialIds: Array.from(selectedContextIds),
+        selectedWorkIds: Array.from(selectedWorkIds),
+      };
+      setLongformContext(state);
+      setShowLongformTool(true);
+      return;
+    }
+    // TODO: hook up other模板的生成逻辑（当前保持占位）
   };
 
   const handleToggleReference = (item: ProjectItem | Work | LocalFileItem | Material) => {
@@ -2508,6 +2752,13 @@ const ProjectDetailView: React.FC<{
     if (updatedSelected) setSelectedMaterial(updatedSelected);
   };
 
+  const handleMarkPublished = (workId: string, info: { platform: 'wechat'; wechatAppid: string; articleType: 'news' | 'newspic'; truncated?: boolean }) => {
+    onUpdateWorks(prev => prev.map(w => w.id === workId ? { ...w, publishedTo: Array.from(new Set([...(w.publishedTo || []), info.platform])) } : w));
+    if (selectedWork?.id === workId) {
+      setSelectedWork(prev => prev ? { ...prev, publishedTo: Array.from(new Set([...(prev.publishedTo || []), info.platform])) } : prev);
+    }
+  };
+
   // ... (Rest of component functions: handleDeleteItem, handleRenameItem, handleMoveItem, handleDownloadItem, handleOpenLink, getAgentButtonContent, filteredProjectItems, FILTER_OPTIONS, currentModel, modelOptionsToUse) ...
 
   const handleDeleteItem = (itemId: string) => {
@@ -2753,20 +3004,36 @@ const ProjectDetailView: React.FC<{
              {activeTab === 'works' ? (
                 worksListMode === 'works' ? (
                   // WORKS LIST
-                  works.map(work => (
-                     <div 
-                       key={work.id} 
-                       onClick={() => {
-                          setSelectedWork(work);
-                          setChatReferences([work]);
-                       }}
-                       className={`group flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${selectedWork?.id === work.id ? 'bg-blue-50/60' : 'hover:bg-gray-50'}`}
-                     >
-                        <div className="mt-0.5 flex-shrink-0 p-1 bg-gray-50 border border-gray-100 rounded">
-                          {getIconForWork(work.type)}
+                 works.map(work => (
+                    <div 
+                      key={work.id} 
+                      onClick={() => {
+                          if (selectedTemplate?.id === 't-longform-image') {
+                            toggleWorkSelection(work);
+                            setSelectedWork(null);
+                          } else {
+                            setSelectedWork(work);
+                            setChatReferences([work]);
+                          }
+                        }}
+                      className={`group flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${(selectedWork?.id === work.id || selectedWorkIds.has(work.id)) ? 'bg-blue-50/60' : 'hover:bg-gray-50'}`}
+                    >
+                        <div className="mt-0.5 flex-shrink-0 p-1 bg-gray-50 border border-gray-100 rounded flex items-center justify-center">
+                          {selectedTemplate?.id === 't-longform-image' ? (
+                            selectedWorkIds.has(work.id) ? <CheckSquareIcon className="w-4 h-4 text-gray-900" /> : <SquareIcon className="w-4 h-4 text-gray-400" />
+                          ) : (
+                            getIconForWork(work.type)
+                          )}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <h4 className={`text-sm font-medium leading-snug mb-1 line-clamp-2 ${selectedWork?.id === work.id ? 'text-gray-900' : 'text-gray-700'}`}>{work.title}</h4>
+                          <div className="flex items-start gap-2">
+                            <h4 className={`text-sm font-medium leading-snug mb-1 line-clamp-2 ${(selectedWork?.id === work.id || selectedWorkIds.has(work.id)) ? 'text-gray-900' : 'text-gray-700'}`}>{work.title}</h4>
+                            {work.publishedTo?.includes('wechat') && (
+                              <span className="mt-0.5 inline-flex items-center px-2 py-0.5 rounded-full bg-green-50 text-green-600 text-[10px] border border-green-100">
+                                已发公众号
+                              </span>
+                            )}
+                          </div>
                           <span className="text-xs text-gray-400">{work.date}</span>
                         </div>
                      </div>
@@ -2918,11 +3185,37 @@ const ProjectDetailView: React.FC<{
 
         {/* COLUMN 2: CENTER (Preview OR Creation Templates) */}
         <div className="flex-1 flex flex-col bg-white rounded-2xl shadow-sm border border-gray-200/50 overflow-hidden relative min-w-[400px]">
+          {showLongformTool && (
+            <div className="absolute inset-0 z-30 bg-white overflow-y-auto">
+              <div className="flex justify-end p-4">
+                <button
+                  onClick={handleCloseLongformTool}
+                  className="w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center shadow-sm border border-gray-200"
+                  title="关闭长图文工具"
+                >
+                  <XIcon className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="p-4">
+                <XhsLongImageTool
+                  ratio={longformContext.ratio}
+                  prompt={longformContext.prompt}
+                  selectedMaterialIds={longformContext.selectedMaterialIds}
+                  selectedWorkIds={longformContext.selectedWorkIds}
+                />
+              </div>
+            </div>
+          )}
           {/* ... (Existing Content Render Logic) ... */}
           {activeTab === 'works' ? (
              selectedWork ? (
                 // --- WORK PREVIEW VIEW ---
-                <WorkPreviewView work={selectedWork} onBack={() => setSelectedWork(null)} onSelectText={handleTextMouseUp} />
+                <WorkPreviewView 
+                  work={selectedWork} 
+                  onBack={() => setSelectedWork(null)} 
+                  onSelectText={handleTextMouseUp} 
+                  onPublished={handleMarkPublished}
+                />
              ) : selectedTemplate ? (
                // --- TEMPLATE DETAIL VIEW ---
                <div className="flex-1 flex flex-col items-center justify-center p-12 bg-white relative rounded-2xl">
@@ -2937,15 +3230,58 @@ const ProjectDetailView: React.FC<{
                       <div className="flex flex-col items-center text-center">
                           <div className={`w-20 h-20 rounded-2xl flex items-center justify-center mb-6 bg-gray-50 shadow-sm border border-gray-100`}>
                               {selectedTemplate.icon}
-                          </div>
-                          <h2 className="text-3xl font-bold text-gray-900 mb-4">{selectedTemplate.title}</h2>
-                          <p className="text-lg text-gray-500 mb-8 leading-relaxed">
-                              {selectedTemplate.description}
-                          </p>
-                          <div className="w-full bg-blue-50/50 border border-blue-100 rounded-xl p-4 mb-10 flex items-center justify-center gap-2 text-blue-800">
-                              <CheckSquareIcon className="w-5 h-5" />
-                              <span className="font-medium">Selected materials: <span className="font-bold">{selectedContextIds.size}</span></span>
-                          </div>
+                           </div>
+                           <h2 className="text-3xl font-bold text-gray-900 mb-4">{selectedTemplate.title}</h2>
+                           <p className="text-lg text-gray-500 mb-8 leading-relaxed">
+                               {selectedTemplate.description}
+                           </p>
+                               {selectedTemplate.id === 't-longform-image' && (
+                             <div className="w-full space-y-4 mb-8">
+                               <div className="flex items-center justify-between">
+                                 <span className="text-sm font-semibold text-gray-900">默认尺寸</span>
+                                 <span className="text-xs text-gray-400">3:4 / 16:9 / 1:1</span>
+                               </div>
+                               <div className="grid grid-cols-3 gap-3">
+                                 {LONGFORM_ASPECTS.map(option => (
+                                   <button
+                                     key={option.id}
+                                     onClick={() => setLongFormAspect(option.id)}
+                                     className={`text-left border rounded-xl px-3 py-2.5 transition-all bg-white ${longFormAspect === option.id ? 'border-gray-900 text-gray-900 shadow-sm' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                                   >
+                                     <div className="flex items-center gap-2 mb-1">
+                                       <span className={`inline-flex items-center justify-center rounded ${option.id === '1:1' ? 'w-6 h-6' : option.id === '16:9' ? 'w-7 h-4' : 'w-4 h-7'} bg-gray-100 border border-gray-200`}></span>
+                                       <span className="font-semibold text-sm">{option.label}</span>
+                                     </div>
+                                     <div className="text-[11px] text-gray-400">{option.hint}</div>
+                                   </button>
+                                 ))}
+                               </div>
+                               <div className="space-y-2">
+                                 <div className="flex items-center justify-between">
+                                    <span className="text-sm font-semibold text-gray-900">模板</span>
+                                    <span className="text-xs text-gray-400">预留位</span>
+                                 </div>
+                                 <div className="border border-dashed border-gray-300 rounded-xl p-3 bg-gray-50/60 text-left">
+                                    <div className="text-sm font-medium text-gray-700">模板占位</div>
+                                    <p className="text-xs text-gray-500 mt-1 leading-relaxed">后续可接入长图文模板；当前逻辑与其他模块一致，已支持多选资料并调用图片生成流程。</p>
+                                 </div>
+                               </div>
+                             </div>
+                           )}
+                           <div className="w-full bg-blue-50/50 border border-blue-100 rounded-xl p-4 mb-10 flex flex-col gap-2 text-blue-800">
+                               <div className="flex items-center gap-2">
+                                 <CheckSquareIcon className="w-5 h-5" />
+                                 <span className="font-medium">选中资料：<span className="font-bold">{selectedContextIds.size}</span></span>
+                               </div>
+                               <div className="flex items-center gap-2 text-sm">
+                                 <PenToolIcon className="w-4 h-4" />
+                                 <span>选中作品：<span className="font-bold">{selectedWorkIds.size}</span></span>
+                               </div>
+                               <div className="flex items-center gap-2 text-sm text-gray-700">
+                                 <EditIcon className="w-4 h-4" />
+                                 <span>提示词：<span className="font-semibold truncate" title={templatePrompts[selectedTemplate.id] || selectedTemplate.defaultPrompt || ''}>{templatePrompts[selectedTemplate.id] || selectedTemplate.defaultPrompt || '暂无提示词'}</span></span>
+                               </div>
+                           </div>
                           <div className="flex items-center gap-4 w-full">
                               <Button 
                                 variant="secondary" 
@@ -2955,7 +3291,7 @@ const ProjectDetailView: React.FC<{
                               >
                                 Cancel
                               </Button>
-                              <Button variant="primary" size="lg" className="flex-1 rounded-full bg-black hover:bg-gray-800 py-3 gap-2 shadow-lg" onClick={() => { /* Generate Action */ }}>
+                              <Button variant="primary" size="lg" className="flex-1 rounded-full bg-black hover:bg-gray-800 py-3 gap-2 shadow-lg" onClick={handleGenerateTemplate}>
                                 <SparklesIcon className="w-5 h-5" /> Generate
                               </Button>
                           </div>
@@ -2966,51 +3302,59 @@ const ProjectDetailView: React.FC<{
                // --- CREATION TEMPLATES GALLERY ---
                <div className="flex-1 overflow-y-auto p-12 bg-white rounded-2xl custom-scrollbar">
                   {/* ... (Template Gallery Content) ... */}
-                  <div className="max-w-4xl mx-auto">
-                     <div className="flex justify-between items-center mb-6">
-                        <h1 className="text-3xl font-bold text-gray-900">What do you want to create?</h1>
-                        <Button variant="secondary" size="sm" className="rounded-full px-4 gap-2">
-                           <PlusIcon className="w-4 h-4" /> New Template
-                        </Button>
-                     </div>
-                     <p className="text-gray-500 mb-8">Select a type, or view templates to create quickly.</p>
-                     <div className="flex gap-4 mb-10">
-                        <div className="flex-1 border border-gray-200 rounded-xl p-4 flex items-center gap-3 cursor-pointer hover:border-gray-300 hover:shadow-sm transition-all bg-white group">
-                           <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-500 flex items-center justify-center group-hover:bg-blue-100 transition-colors">
-                              <FileTextIcon className="w-5 h-5" />
-                           </div>
-                           <span className="font-medium text-gray-700">Doc</span>
-                        </div>
-                        <div className="flex-1 border border-gray-200 rounded-xl p-4 flex items-center gap-3 cursor-pointer hover:border-gray-300 hover:shadow-sm transition-all bg-white group">
-                           <div className="w-10 h-10 rounded-lg bg-purple-50 text-purple-500 flex items-center justify-center group-hover:bg-purple-100 transition-colors">
-                              <MicIcon className="w-5 h-5" />
-                           </div>
-                           <span className="font-medium text-gray-700">Podcast</span>
-                        </div>
-                     </div>
-                     <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Templates</h3>
-                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {CREATION_TEMPLATES.map(template => (
-                           <div 
-                              key={template.id} 
-                              onClick={() => {
-                                 setSelectedTemplate(template);
-                                 setWorksListMode('materials');
-                              }}
-                              className={`group relative bg-white border border-gray-200 rounded-xl p-6 hover:shadow-md transition-shadow cursor-pointer overflow-hidden ${template.color}`}
-                           >
-                              <div className="mb-4">{template.icon}</div>
-                              <h4 className="text-lg font-bold text-gray-900 mb-2">{template.title}</h4>
-                              <p className="text-sm text-gray-500 leading-relaxed mb-8">{template.description}</p>
-                              <div className="absolute bottom-6 left-6 flex items-center text-xs text-gray-400 gap-1">
-                                 <LayoutIcon className="w-3 h-3" />
-                                 {template.tag}
+                      <div className="max-w-5xl mx-auto">
+                         <div className="flex justify-between items-center mb-4">
+                            <h1 className="text-2xl font-bold text-gray-900">Templates</h1>
+                            <Button variant="secondary" size="sm" className="rounded-full px-4 gap-2">
+                               <PlusIcon className="w-4 h-4" /> New Template
+                            </Button>
+                         </div>
+                         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                            {CREATION_TEMPLATES.map(template => (
+                              <div 
+                                 key={template.id} 
+                                 onClick={() => {
+                                    setSelectedTemplate(template);
+                                    if (template.id === 't-longform-image') {
+                                      setWorksListMode('works');
+                                    } else {
+                                      setWorksListMode('materials');
+                                    }
+                                 }}
+                                 className="relative group rounded-xl border border-gray-200 bg-white/90 hover:shadow-sm transition-all cursor-pointer overflow-hidden p-3 min-h-[110px]"
+                              >
+                                 <div className="flex items-start gap-2">
+                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${template.accent || 'bg-gray-100 text-gray-700'}`}>
+                                       {template.icon}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                       <div className="flex items-center justify-between gap-2">
+                                          <h4 className="text-base font-semibold text-gray-900 truncate">{template.title}</h4>
+                                          <button 
+                                             className="p-1 rounded-full hover:bg-gray-100 text-gray-500 z-10"
+                                             onClick={(e) => {
+                                                e.stopPropagation();
+                                                setEditingTemplate(template);
+                                             }}
+                                             title="编辑提示词"
+                                          >
+                                             <EditIcon className="w-4 h-4" />
+                                          </button>
+                                       </div>
+                                       <p className="text-xs text-gray-500 leading-relaxed line-clamp-2 mt-1">
+                                          {templatePrompts[template.id] || template.description}
+                                       </p>
+                                    </div>
+                                 </div>
+                                 <div className="flex items-center gap-1 text-[11px] text-gray-500 mt-3">
+                                    <LayoutIcon className="w-3 h-3" />
+                                    {template.tag}
+                                 </div>
                               </div>
-                           </div>
-                        ))}
-                     </div>
-                  </div>
-               </div>
+                            ))}
+                         </div>
+                      </div>
+                   </div>
              )
           ) : (
              // CONTENT PREVIEW VIEW
@@ -3531,6 +3875,48 @@ const ProjectDetailView: React.FC<{
          projects={projects}
          currentProject={project}
       />
+
+      {/* Template Prompt Edit Modal */}
+      {editingTemplate && (
+        <div className="fixed inset-0 z-[150] bg-black/30 flex items-center justify-center p-4">
+           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl border border-gray-200">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+                 <div className="flex items-center gap-2">
+                   <span className="text-gray-700">{editingTemplate.icon}</span>
+                   <h3 className="text-lg font-semibold text-gray-900">编辑提示词 - {editingTemplate.title}</h3>
+                 </div>
+                 <button className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500" onClick={() => setEditingTemplate(null)}>
+                   <XIcon className="w-4 h-4" />
+                 </button>
+              </div>
+              <div className="p-5 space-y-4">
+                 <div>
+                   <div className="text-sm text-gray-600 mb-2">提示词（用于该功能生成文案/图像时的默认引导）</div>
+                   <textarea 
+                     className="w-full min-h-[160px] rounded-xl border border-gray-200 focus:border-gray-400 focus:ring-0 text-sm text-gray-800 p-3 resize-none"
+                     value={editingPrompt}
+                     onChange={(e) => setEditingPrompt(e.target.value)}
+                     placeholder="输入提示词，例如：请将选中资料整理为长图文，包含要点摘要、分段标题与视觉描述。"
+                   />
+                 </div>
+                 <div className="flex items-center justify-end gap-3">
+                   <Button variant="secondary" size="sm" className="rounded-full px-4" onClick={() => setEditingTemplate(null)}>取消</Button>
+                   <Button 
+                     variant="primary" 
+                     size="sm" 
+                     className="rounded-full px-5 bg-black hover:bg-gray-800"
+                     onClick={() => {
+                       setTemplatePrompts(prev => ({ ...prev, [editingTemplate.id]: editingPrompt || editingTemplate.description }));
+                       setEditingTemplate(null);
+                     }}
+                   >
+                     保存
+                   </Button>
+                 </div>
+              </div>
+           </div>
+        </div>
+      )}
     </div>
   );
 };
