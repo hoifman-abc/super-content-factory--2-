@@ -209,13 +209,28 @@ interface WechatAccount {
 
 const WECHAT_OPENAPI_BASE = 'https://wx.limyai.com/api/openapi';
 const WECHAT_OPENAPI_KEY = (import.meta as any)?.env?.VITE_WECHAT_OPENAPI_KEY || (import.meta as any)?.env?.VITE_WECHAT_API_KEY || '';
+const WECHAT_PROXY_URL = (import.meta as any)?.env?.VITE_WECHAT_PROXY_URL || '';
+
+const XHS_PUBLISH_BASE = 'https://note.limyai.com/api/openapi';
+const XHS_PUBLISH_API_KEY = (import.meta as any)?.env?.VITE_XHS_PUBLISH_API_KEY || '';
+
+const fetchWithProxyFallback = async (url: string, options: RequestInit) => {
+  try {
+    return await fetch(url, options);
+  } catch (err) {
+    if (!WECHAT_PROXY_URL) throw err;
+    const proxied = `${WECHAT_PROXY_URL}${encodeURIComponent(url)}`;
+    return await fetch(proxied, options);
+  }
+};
 
 const postWechat = async (path: string, payload: any) => {
   if (!WECHAT_OPENAPI_KEY) {
     throw new Error('缺少微信开放平台 API Key');
   }
 
-  const res = await fetch(`${WECHAT_OPENAPI_BASE}${path}`, {
+  const url = `${WECHAT_OPENAPI_BASE}${path}`;
+  const res = await fetchWithProxyFallback(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -238,6 +253,92 @@ const fetchWechatAccounts = async (): Promise<WechatAccount[]> => {
   return data?.data?.accounts || [];
 };
 
+type PublishXhsPayload = {
+  title?: string;
+  content?: string;
+  coverImage: string;
+  images?: string[];
+  tags?: string[];
+  noteId?: string;
+};
+
+const publishXhsNote = async (payload: PublishXhsPayload, idempotencyKey?: string) => {
+  if (!XHS_PUBLISH_API_KEY) {
+    throw new Error('缺少小红书发布 API Key');
+  }
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'X-API-Key': XHS_PUBLISH_API_KEY,
+  };
+  if (idempotencyKey) {
+    headers['Idempotency-Key'] = idempotencyKey;
+  }
+
+  const res = await fetch(`${XHS_PUBLISH_BASE}/publish_note`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload || {}),
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.success === false) {
+    const message = data?.error || data?.message || res.statusText || '请求失败';
+    const code = data?.code;
+    throw new Error(code ? `${code}: ${message}` : message);
+  }
+  return data;
+};
+
+const extractImagesFromContent = (content?: string): string[] => {
+  if (!content) return [];
+  const images = new Set<string>();
+
+  const mdImgRegex = /!\[[^\]]*]\(([^)]+)\)/g;
+  let match;
+  while ((match = mdImgRegex.exec(content)) !== null) {
+    if (match[1]) images.add(match[1]);
+  }
+
+  const htmlImgRegex = /<img[^>]*src=["']([^"']+)["'][^>]*>/gi;
+  while ((match = htmlImgRegex.exec(content)) !== null) {
+    if (match[1]) images.add(match[1]);
+  }
+
+  return Array.from(images);
+};
+
+const stripMarkdownAndHtml = (input?: string): string => {
+  if (!input) return '';
+  let text = input;
+  // Remove markdown image syntax
+  text = text.replace(/!\[[^\]]*]\([^)]*\)/g, '');
+  // Convert markdown links to plain text
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1');
+  // Handle basic HTML line breaks/paragraphs/headings
+  text = text.replace(/<br\s*\/?>/gi, '\n');
+  text = text.replace(/<\/p>/gi, '\n\n');
+  text = text.replace(/<\/h[1-6]>/gi, '\n\n');
+  // Strip other HTML tags
+  text = text.replace(/<[^>]+>/g, '');
+  // Remove markdown headings/quotes/lists/code fences
+  text = text.replace(/(^|\n)[>#]+\s*/g, '\n');
+  text = text.replace(/(^|\n)\s*[-*+]\s+/g, '\n');
+  text = text.replace(/```[\s\S]*?```/g, '');
+  text = text.replace(/`([^`]*)`/g, '$1');
+  // Normalize whitespace
+  text = text.replace(/\r\n/g, '\n');
+  text = text.replace(/\n{3,}/g, '\n\n');
+  return text.trim();
+};
+
+const generateIdempotencyKey = () => {
+  if (typeof crypto !== 'undefined' && (crypto as any).randomUUID) {
+    return (crypto as any).randomUUID();
+  }
+  return `xhs-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
 type PublishWechatPayload = {
   wechatAppid: string;
   title: string;
@@ -252,6 +353,10 @@ type PublishWechatPayload = {
 const publishWechatArticle = async (payload: PublishWechatPayload) => {
   return await postWechat('/wechat-publish', payload);
 };
+
+type PublishInfo = 
+  | { platform: 'wechat'; wechatAppid: string; articleType: 'news' | 'newspic'; truncated?: boolean }
+  | { platform: 'xiaohongshu'; publishUrl?: string; qrImageUrl?: string; noteId?: string };
 
 interface Template {
   id: string;
@@ -1276,7 +1381,7 @@ const PublishModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
   work: Work | null;
-  onPublished?: (info: { platform: 'wechat'; wechatAppid: string; articleType: 'news' | 'newspic'; truncated?: boolean }) => void;
+  onPublished?: (info: PublishInfo) => void;
 }> = ({ isOpen, onClose, work, onPublished }) => {
   const [platform, setPlatform] = useState<'wechat' | 'xiaohongshu'>('wechat');
   const [wechatType, setWechatType] = useState<'article' | 'greenbook'>('article');
@@ -1286,6 +1391,9 @@ const PublishModal: React.FC<{
   const [body, setBody] = useState(work?.content || '');
   const [imageInput, setImageInput] = useState('');
   const [images, setImages] = useState<string[]>(work?.images || (work?.imageUrl ? [work.imageUrl] : []));
+  const [tagsInput, setTagsInput] = useState('');
+  const [noteId, setNoteId] = useState('');
+  const [idempotencyKey, setIdempotencyKey] = useState(generateIdempotencyKey());
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [accounts, setAccounts] = useState<WechatAccount[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
@@ -1298,6 +1406,9 @@ const PublishModal: React.FC<{
     setCoverUrl(work?.imageUrl || work?.images?.[0] || '');
     setBody(work?.content || '');
     setImages(work?.images || (work?.imageUrl ? [work.imageUrl] : []));
+    setTagsInput('');
+    setNoteId('');
+    setIdempotencyKey(generateIdempotencyKey());
   }, [work?.id, work?.title, work?.imageUrl, work?.images, work?.content]);
 
   useEffect(() => {
@@ -1335,65 +1446,133 @@ const PublishModal: React.FC<{
     setSubmitError(null);
     setNotice(null);
 
-    if (platform !== 'wechat') {
-      setSubmitError('当前仅接入公众号发布，其他平台待接入');
-      return;
-    }
-
-    if (!accountId) {
-      setSubmitError('请选择公众号');
-      return;
-    }
-
     const trimmedTitle = (title || '').trim();
-    if (!trimmedTitle) {
-      setSubmitError('请填写标题');
-      return;
-    }
+    const trimmedBody = (body || '').trim();
+    const baseContent = trimmedBody || (work?.content || '');
+    const extractedImages = extractImagesFromContent(baseContent);
+    const mergedImages = Array.from(new Set([
+      ...(images || []),
+      ...(work?.images || []),
+      ...(work?.imageUrl ? [work.imageUrl] : []),
+      ...extractedImages,
+    ].filter(Boolean)));
+    const resolvedCover = (coverUrl || mergedImages[0] || '').trim();
 
-    const safeTitle = trimmedTitle.slice(0, 64);
-    const wechatAppid = accountId;
-
-    let finalBody = (body || '').trim();
-    let truncated = false;
-
-    if (wechatType === 'greenbook') {
-      if (!images || images.length === 0) {
-        setSubmitError('小绿书至少需要1张图片');
+    if (platform === 'wechat') {
+      if (!accountId) {
+        setSubmitError('请选择公众号');
         return;
       }
-      if (finalBody.length > 1000) {
-        finalBody = finalBody.slice(0, 1000);
-        truncated = true;
+
+      if (!trimmedTitle) {
+        setSubmitError('请填写标题');
+        return;
       }
-      // 确保图片出现在内容中
-      const missingMd = images.filter(img => !finalBody.includes(img)).map(img => `![image](${img})`);
-      if (missingMd.length > 0) {
-        finalBody = `${finalBody ? `${finalBody}\n\n` : ''}${missingMd.join('\n')}`;
+
+      const safeTitle = trimmedTitle.slice(0, 64);
+      const wechatAppid = accountId;
+
+      let finalBody = baseContent;
+      let truncated = false;
+
+      if (wechatType === 'greenbook') {
+        if (!mergedImages || mergedImages.length === 0) {
+          setSubmitError('小绿书至少需要1张图片');
+          return;
+        }
+        if (finalBody.length > 1000) {
+          finalBody = finalBody.slice(0, 1000);
+          truncated = true;
+        }
+        // 确保图片出现在内容中
+        const missingMd = mergedImages.filter(img => !finalBody.includes(img)).map(img => `![image](${img})`);
+        if (missingMd.length > 0) {
+          finalBody = `${finalBody ? `${finalBody}\n\n` : ''}${missingMd.join('\n')}`;
+        }
       }
+
+      const summary = finalBody ? finalBody.slice(0, 120) : undefined;
+      const articleType: 'news' | 'newspic' = wechatType === 'greenbook' ? 'newspic' : 'news';
+
+      let coverImageToUse: string | undefined = resolvedCover || undefined;
+      if (coverImageToUse?.startsWith('data:')) {
+        coverImageToUse = undefined;
+        setNotice(prev => prev ? prev : '封面为 data URL，已忽略以避免过长导致发布失败');
+      } else if (coverImageToUse && coverImageToUse.length > 240) {
+        coverImageToUse = undefined;
+        setNotice(prev => prev ? prev : '封面链接过长，已忽略以避免发布失败');
+      }
+
+      const payload: PublishWechatPayload = {
+        wechatAppid,
+        title: safeTitle,
+        content: finalBody || (work?.content || ''),
+        summary,
+        coverImage: coverImageToUse,
+        contentFormat: 'markdown',
+        articleType,
+      };
+
+      setIsSubmitting(true);
+      try {
+        await publishWechatArticle(payload);
+        if (truncated) {
+          setNotice('正文超过1000字，已自动截断后发布');
+        }
+        alert('发布成功，已提交到公众号草稿箱');
+        onPublished?.({ platform: 'wechat', wechatAppid, articleType, truncated });
+        onClose();
+      } catch (err: any) {
+        const msg = err?.message || '发布失败，请稍后重试';
+        setSubmitError(msg);
+        alert(`发布失败：${msg}`);
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
     }
 
-    const summary = finalBody ? finalBody.slice(0, 120) : undefined;
-    const articleType: 'news' | 'newspic' = wechatType === 'greenbook' ? 'newspic' : 'news';
+    // --- 小红书 ---
+    const cleanedTitle = (trimmedTitle || work?.title || '').trim().slice(0, 64);
+    const pureText = stripMarkdownAndHtml(baseContent);
+    if (!cleanedTitle && !pureText) {
+      setSubmitError('标题和正文至少填写一项');
+      return;
+    }
+    if (!resolvedCover) {
+      setSubmitError('请填写封面图');
+      return;
+    }
 
-    const payload: PublishWechatPayload = {
-      wechatAppid,
-      title: safeTitle,
-      content: finalBody || (work?.content || ''),
-      summary,
-      coverImage: coverUrl.trim() || undefined,
-      contentFormat: 'markdown',
-      articleType,
+    const tags = tagsInput
+      .split(/[,，\s]+/)
+      .map(t => t.trim())
+      .filter(Boolean);
+
+    const imagesForPayload = resolvedCover ? (mergedImages.includes(resolvedCover) ? mergedImages : [resolvedCover, ...mergedImages]) : mergedImages;
+
+    const payload: PublishXhsPayload = {
+      title: cleanedTitle || undefined,
+      content: pureText || undefined,
+      coverImage: resolvedCover,
+      images: imagesForPayload,
+      tags: tags.length ? tags : undefined,
+      noteId: noteId.trim() || undefined,
     };
+
+    const finalIdempotency = idempotencyKey || generateIdempotencyKey();
 
     setIsSubmitting(true);
     try {
-      await publishWechatArticle(payload);
-      if (truncated) {
-        setNotice('正文超过1000字，已自动截断后发布');
-      }
-      alert('发布成功，已提交到公众号草稿箱');
-      onPublished?.({ platform: 'wechat', wechatAppid, articleType, truncated });
+      const resp = await publishXhsNote(payload, finalIdempotency);
+      const data = resp?.data || {};
+      alert('发布成功，已生成扫码二维码');
+      onPublished?.({ 
+        platform: 'xiaohongshu', 
+        publishUrl: data.publish_url, 
+        qrImageUrl: data.xiaohongshu_qr_image_url, 
+        noteId: data.note_id 
+      });
       onClose();
     } catch (err: any) {
       const msg = err?.message || '发布失败，请稍后重试';
@@ -1404,7 +1583,7 @@ const PublishModal: React.FC<{
     }
   };
 
-  const disablePublish = isSubmitting || !title.trim();
+  const disablePublish = isSubmitting || (platform === 'wechat' ? !title.trim() : (!title.trim() && !(body || '').trim()));
 
   return (
     <div className="fixed inset-0 z-[160] flex items-center justify-center p-4">
@@ -1492,6 +1671,46 @@ const PublishModal: React.FC<{
             </div>
           )}
 
+          {platform === 'xiaohongshu' && (
+            <div className="space-y-3">
+              <div className="p-3 rounded-lg bg-red-50 border border-red-100 text-sm text-red-700">
+                发布将扣除 1 积分；建议填写幂等键避免重复扣费，接口返回的发布链接会用于生成扫码二维码。
+              </div>
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">标签（可选，逗号分隔）</label>
+                  <input
+                    value={tagsInput}
+                    onChange={e => setTagsInput(e.target.value)}
+                    placeholder="效率, 职场, 生活方式"
+                    className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-gray-900 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">自定义 noteId（可选）</label>
+                  <input
+                    value={noteId}
+                    onChange={e => setNoteId(e.target.value)}
+                    placeholder="用于幂等、去重"
+                    className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-gray-900 focus:outline-none"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Idempotency-Key（可选，推荐填写）</label>
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      value={idempotencyKey}
+                      onChange={e => setIdempotencyKey(e.target.value)}
+                      placeholder="避免重复扣费的幂等键"
+                      className="flex-1 border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-gray-900 focus:outline-none"
+                    />
+                    <Button variant="secondary" onClick={() => setIdempotencyKey(generateIdempotencyKey())}>重新生成</Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="grid sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
               <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">发布标题</label>
@@ -1558,7 +1777,7 @@ const PublishModal: React.FC<{
 
         <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between bg-gray-50/50">
           <div className="text-xs text-gray-500">
-            {notice || '发布到公众号草稿箱（API已接入）。'}
+            {notice || (platform === 'wechat' ? '发布到公众号草稿箱（API已接入）。' : '发布到小红书并生成扫码二维码（每次扣除 1 积分）。')}
             {submitError && <span className="text-red-500 ml-2">{submitError}</span>}
           </div>
           <div className="flex gap-3">
@@ -1573,6 +1792,55 @@ const PublishModal: React.FC<{
 
 
 // --- CHAT REFERENCE PICKER ---
+
+const PublishResultModal: React.FC<{ result: PublishInfo & { platform: 'xiaohongshu' }; onClose: () => void }> = ({ result, onClose }) => {
+  const qrSrc = result.qrImageUrl || (result.publishUrl ? `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(result.publishUrl)}` : '');
+
+  const handleCopy = () => {
+    if (result.publishUrl && navigator?.clipboard) {
+      navigator.clipboard.writeText(result.publishUrl).catch(() => {});
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[170] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose}></div>
+      <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-gray-400">发布成功 · 小红书</p>
+            <h3 className="text-lg font-bold text-gray-900">扫码在手机端查看</h3>
+          </div>
+          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg">
+            <XIcon className="w-4 h-4" />
+          </button>
+        </div>
+        {qrSrc ? (
+          <div className="w-full flex justify-center">
+            <img src={qrSrc} alt="Xiaohongshu QR" className="w-56 h-56 object-contain rounded-xl border border-gray-100 shadow-sm bg-white" />
+          </div>
+        ) : (
+          <div className="text-center text-sm text-gray-500 bg-gray-50 border border-gray-100 rounded-xl p-4">
+            未返回二维码，您可以复制发布链接在手机端打开。
+          </div>
+        )}
+        <div className="space-y-2">
+          {result.publishUrl && (
+            <div className="text-xs text-gray-500 break-all bg-gray-50 border border-gray-100 rounded-lg p-3">
+              {result.publishUrl}
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            {result.publishUrl && (
+              <Button variant="secondary" onClick={handleCopy}>复制链接</Button>
+            )}
+            <Button onClick={onClose}>关闭</Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 interface LocalFileItem {
   id: string;
@@ -2006,10 +2274,11 @@ const ContentRenderer: React.FC<{ item: ProjectItem | Material; isEditing: boole
 
 // ... (Rest of the file remains unchanged, including WorkPreviewView, ProjectDetailView, WorkspacePage) ...
 
-const WorkPreviewView: React.FC<{ work: Work; onBack: () => void; onSelectText?: () => void; onPublished?: (workId: string, info: { platform: 'wechat'; wechatAppid: string; articleType: 'news' | 'newspic'; truncated?: boolean }) => void }> = ({ work, onBack, onSelectText, onPublished }) => {
+const WorkPreviewView: React.FC<{ work: Work; onBack: () => void; onSelectText?: () => void; onPublished?: (workId: string, info: PublishInfo) => void }> = ({ work, onBack, onSelectText, onPublished }) => {
   const [showDropdown, setShowDropdown] = useState(false);
   const images = work.images || (work.imageUrl ? [work.imageUrl] : []);
   const [showPublishModal, setShowPublishModal] = useState(false);
+  const [publishResult, setPublishResult] = useState<PublishInfo | null>(null);
 
   return (
     <>
@@ -2125,8 +2394,21 @@ const WorkPreviewView: React.FC<{ work: Work; onBack: () => void; onSelectText?:
         isOpen={showPublishModal} 
         onClose={() => setShowPublishModal(false)} 
         work={work} 
-        onPublished={(info) => onPublished?.(work.id, info)}
+        onPublished={(info) => {
+          if (info.platform === 'wechat') {
+            onPublished?.(work.id, info);
+          } else {
+            setPublishResult(info);
+            onPublished?.(work.id, info);
+          }
+        }}
       />
+      {publishResult && publishResult.platform === 'xiaohongshu' && (
+        <PublishResultModal 
+          result={publishResult as PublishInfo & { platform: 'xiaohongshu' }} 
+          onClose={() => setPublishResult(null)} 
+        />
+      )}
     </>
   );
 };
@@ -2176,11 +2458,13 @@ const ProjectDetailView: React.FC<{
     title: '',
     text: ''
   });
+  const [isSavingLongformWork, setIsSavingLongformWork] = useState(false);
 
   const handleCloseLongformTool = () => {
     setShowLongformTool(false);
     setSelectedTemplate(null);
     setWorksListMode('works');
+    setIsSavingLongformWork(false);
   };
 
   // Chat History
@@ -2432,6 +2716,45 @@ const ProjectDetailView: React.FC<{
       return;
     }
     // TODO: hook up other模板的生成逻辑（当前保持占位）
+  };
+
+  const handleSaveLongformWork = () => {
+    if (isSavingLongformWork) return;
+    setIsSavingLongformWork(true);
+
+    window.dispatchEvent(new CustomEvent('xhs-longimage-save', {
+      detail: {
+        onSave: (payload: { title?: string; text?: string; images: string[]; coverImage?: string }) => {
+          if (!payload?.images?.length) {
+            setIsSavingLongformWork(false);
+            alert('暂无可保存的图片');
+            return;
+          }
+          const workTitle = payload.title?.trim() || longformContext.title || '长图文作品';
+          const workContent = payload.text || longformContext.text || '';
+          const newWork: Work = {
+            id: `work-${Date.now()}`,
+            title: workTitle,
+            type: 'Image',
+            date: 'Just now',
+            content: workContent,
+            preview: workContent ? (workContent.substring(0, 100) + (workContent.length > 100 ? '...' : '')) : '',
+            imageUrl: payload.coverImage || payload.images[0],
+            images: payload.images,
+          };
+          onUpdateWorks(prev => [newWork, ...prev]);
+          setSelectedWork(newWork);
+          setWorksListMode('works');
+          setIsSavingLongformWork(false);
+        },
+        onError: (message?: string) => {
+          setIsSavingLongformWork(false);
+          if (message) {
+            alert(message);
+          }
+        }
+      }
+    }));
   };
 
   const handleToggleReference = (item: ProjectItem | Work | LocalFileItem | Material) => {
@@ -2765,7 +3088,7 @@ const ProjectDetailView: React.FC<{
     if (updatedSelected) setSelectedMaterial(updatedSelected);
   };
 
-  const handleMarkPublished = (workId: string, info: { platform: 'wechat'; wechatAppid: string; articleType: 'news' | 'newspic'; truncated?: boolean }) => {
+  const handleMarkPublished = (workId: string, info: PublishInfo) => {
     onUpdateWorks(prev => prev.map(w => w.id === workId ? { ...w, publishedTo: Array.from(new Set([...(w.publishedTo || []), info.platform])) } : w));
     if (selectedWork?.id === workId) {
       setSelectedWork(prev => prev ? { ...prev, publishedTo: Array.from(new Set([...(prev.publishedTo || []), info.platform])) } : prev);
@@ -3041,11 +3364,18 @@ const ProjectDetailView: React.FC<{
                         <div className="flex-1 min-w-0">
                           <div className="flex items-start gap-2">
                             <h4 className={`text-sm font-medium leading-snug mb-1 line-clamp-2 ${(selectedWork?.id === work.id || selectedWorkIds.has(work.id)) ? 'text-gray-900' : 'text-gray-700'}`}>{work.title}</h4>
-                            {work.publishedTo?.includes('wechat') && (
-                              <span className="mt-0.5 inline-flex items-center px-2 py-0.5 rounded-full bg-green-50 text-green-600 text-[10px] border border-green-100">
-                                已发公众号
-                              </span>
-                            )}
+                            <div className="flex items-center gap-1">
+                              {work.publishedTo?.includes('wechat') && (
+                                <span className="mt-0.5 inline-flex items-center px-2 py-0.5 rounded-full bg-green-50 text-green-600 text-[10px] border border-green-100">
+                                  已发公众号
+                                </span>
+                              )}
+                              {work.publishedTo?.includes('xiaohongshu') && (
+                                <span className="mt-0.5 inline-flex items-center px-2 py-0.5 rounded-full bg-red-50 text-red-600 text-[10px] border border-red-100">
+                                  已发小红书
+                                </span>
+                              )}
+                            </div>
                           </div>
                           <span className="text-xs text-gray-400">{work.date}</span>
                         </div>
@@ -3199,14 +3529,15 @@ const ProjectDetailView: React.FC<{
         {/* COLUMN 2: CENTER (Preview OR Creation Templates) */}
         <div className="flex-1 flex flex-col bg-white rounded-2xl shadow-sm border border-gray-200/50 overflow-hidden relative min-w-[400px]">
           {showLongformTool && (
-            <div className="absolute inset-0 z-30 bg-white overflow-y-auto">
+              <div className="absolute inset-0 z-30 bg-white overflow-y-auto">
               <div className="flex justify-end items-center gap-3 p-4">
                 <button
-                  className="w-11 h-11 rounded-2xl border border-gray-200 bg-white text-gray-500 hover:text-indigo-600 hover:border-indigo-100 shadow-sm flex items-center justify-center transition-all"
-                  title="??? Works"
-                  onClick={() => {}}
+                  className="w-11 h-11 rounded-2xl border border-gray-200 bg-white text-gray-500 hover:text-indigo-600 hover:border-indigo-100 shadow-sm flex items-center justify-center transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                  title="保存到作品"
+                  onClick={handleSaveLongformWork}
+                  disabled={isSavingLongformWork}
                 >
-                  <SaveIcon className="w-5 h-5" />
+                  {isSavingLongformWork ? <RefreshCwIcon className="w-5 h-5 animate-spin" /> : <SaveIcon className="w-5 h-5" />}
                 </button>
                 <button
                   className="w-11 h-11 rounded-2xl border border-gray-200 bg-gray-900 text-white hover:bg-black shadow-lg shadow-gray-200 flex items-center justify-center transition-all disabled:bg-gray-200 disabled:text-gray-400"
