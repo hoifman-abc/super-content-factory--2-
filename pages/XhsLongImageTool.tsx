@@ -6,7 +6,6 @@ import JSZip from 'jszip';
 import { 
   Type as TypeIcon, 
   Settings, 
-  Download, 
   Sparkles, 
   Image as ImageIcon,
   Settings2,
@@ -25,7 +24,16 @@ import {
 } from 'lucide-react';
 import { CanvasRatio, RATIO_MAP, PageContent, ContentBlock, BlockType, CanvasTheme, THEME_MAP, CoverData, CanvasTemplate, TEMPLATE_MAP } from './xhs-tool/types';
 
-export default function App() {
+type XhsLongImageToolProps = {
+  ratio?: string;
+  prompt?: string;
+  selectedMaterialIds?: string[];
+  selectedWorkIds?: string[];
+  initialTitle?: string;
+  initialText?: string;
+};
+
+export default function App({ initialTitle, initialText }: XhsLongImageToolProps) {
   const [title, setTitle] = useState<string>('');
   const [text, setText] = useState<string>('');
   const [ratio, setRatio] = useState<CanvasRatio>(CanvasRatio.RATIO_3_4);
@@ -50,6 +58,18 @@ export default function App() {
 
   const hasCover = useMemo(() => !!(title || coverData), [title, coverData]);
   const totalPreviewPages = useMemo(() => (hasCover ? 1 : 0) + pages.length, [hasCover, pages]);
+  
+  useEffect(() => {
+    if (initialTitle && initialTitle !== title) {
+      setTitle(initialTitle);
+    }
+  }, [initialTitle]);
+
+  useEffect(() => {
+    if (initialText && initialText !== text) {
+      setText(initialText);
+    }
+  }, [initialText]);
 
   useEffect(() => {
     if (pendingSelection.current && textareaRef.current) {
@@ -134,7 +154,7 @@ export default function App() {
 
   const getBlockHTML = (block: ContentBlock, fSize: number) => {
     const lineH = 1.9; 
-    let style = `font-size: ${fSize}px; line-height: ${lineH}; margin-bottom: 1.5em; white-space: pre-wrap; word-break: break-all; font-family: 'Noto Serif SC', serif; font-weight: 400;`;
+    let style = `font-size: ${fSize}px; line-height: ${lineH}; margin-bottom: 1.5em; white-space: pre-wrap; word-break: break-all; font-family: 'Noto Serif SC', serif; font-weight: 500;`;
     const highlightBg = theme === CanvasTheme.DARK ? 'rgba(180, 83, 9, 0.4)' : 'rgba(254, 249, 195, 0.8)';
     
     let content = block.text.replace(/==(.*?)==/g, `<mark style="background-color: ${highlightBg}; color: inherit; font-weight: 900; padding: 2px 6px; border-radius: 4px; text-decoration: underline; text-underline-offset: 4px;">$1</mark>`);
@@ -143,7 +163,7 @@ export default function App() {
       style = `font-size: ${fSize * 1.4}px; font-weight: 900; margin-bottom: 1em; line-height: 1.3; font-family: 'FZXiaoBiaoSong', 'Noto Serif SC', serif;`;
       return `<h2 style="${style}">${content}</h2>`;
     } else if (block.type === 'quote') {
-      style = `font-size: ${fSize}px; border-left: 8px solid #ddd; padding-left: 30px; margin-bottom: 1.5em; line-height: ${lineH}; font-family: 'Noto Serif SC', serif; font-weight: 400;`;
+      style = `font-size: ${fSize}px; border-left: 8px solid #ddd; padding-left: 30px; margin-bottom: 1.5em; line-height: ${lineH}; font-family: 'Noto Serif SC', serif; font-weight: 500;`;
       return `<blockquote style="${style}">${content}</blockquote>`;
     }
     return `<p style="${style}">${content}</p>`;
@@ -397,6 +417,12 @@ export default function App() {
       setIsProcessing(false);
     }
   };
+  
+  useEffect(() => {
+    const handleDownload = () => exportAll();
+    window.addEventListener('xhs-longimage-download', handleDownload);
+    return () => window.removeEventListener('xhs-longimage-download', handleDownload);
+  }, [exportAll]);
 
   const PageDecoration = ({ pageNum }: { pageNum: string }) => {
     return (
@@ -428,26 +454,13 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-[#F2F4F7] text-gray-900 overflow-hidden font-['Noto_Serif_SC',serif]">
-      <aside className="w-full md:w-[420px] bg-white border-r border-gray-200 p-6 flex flex-col gap-6 overflow-y-auto z-20 shadow-xl">
-        <header className="flex items-center gap-3 mb-1">
-          <div className="bg-red-500 p-2.5 rounded-2xl shadow-lg shadow-red-100">
-            <ImageIcon className="text-white w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="text-xl font-black tracking-tight text-gray-800">图文排版大师</h1>
-            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">Smart AI Production</p>
-          </div>
-        </header>
-
-        <section className="space-y-6">
+    <div className="h-[calc(100vh-64px)] flex flex-col md:flex-row bg-[#F2F4F7] text-gray-900 overflow-hidden font-['Noto_Serif_SC',serif]">
+      <aside className="h-full w-full md:w-[420px] bg-white border-r border-gray-200 px-5 pt-2 pb-4 flex flex-col gap-3 overflow-y-auto z-20 shadow-xl">
+        <section className="space-y-3">
           <div className="space-y-2">
-            <label className="text-[10px] font-bold text-gray-400 uppercase flex items-center gap-2 tracking-[0.2em]">
-              <AlignLeft className="w-3 h-3 text-red-500" /> 封面大标题
-            </label>
             <input
               type="text"
-              className="w-full p-4 border border-gray-100 bg-gray-50 rounded-2xl focus:ring-4 focus:ring-red-500/5 outline-none text-base font-bold transition-all placeholder:text-gray-300"
+              className="w-full px-4 py-3 border border-gray-100 bg-gray-50 rounded-2xl focus:ring-4 focus:ring-red-500/5 outline-none text-base font-bold transition-all placeholder:text-gray-300"
               placeholder="请输入引人入胜的标题..."
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -493,14 +506,14 @@ export default function App() {
             </div>
           </div>
 
-          <div className="pt-4 border-t border-gray-100 space-y-5">
+          <div className="pt-2 border-t border-gray-100 space-y-4">
             <div className="flex items-center gap-2 text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em]"><Layout className="w-3 h-3" /> 排版模板</div>
             <div className="flex gap-2">
               {(Object.keys(TEMPLATE_MAP) as CanvasTemplate[]).map((temp) => (
                 <button 
                   key={temp} 
                   onClick={() => setTemplate(temp)} 
-                  className={`flex-1 py-2 px-3 text-[10px] rounded-xl border-2 font-black uppercase transition-all ${template === temp ? 'border-indigo-500 bg-indigo-50 text-indigo-600' : 'bg-white border-gray-100 text-gray-400 hover:border-indigo-200'}`}
+                  className={`flex-1 py-1.5 px-3 text-[10px] rounded-xl border-2 font-black uppercase transition-all ${template === temp ? 'border-indigo-500 bg-indigo-50 text-indigo-600' : 'bg-white border-gray-100 text-gray-400 hover:border-indigo-200'}`}
                 >
                   {TEMPLATE_MAP[temp].label}
                 </button>
@@ -508,13 +521,13 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-2 text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em]"><Palette className="w-3 h-3" /> 设计配色</div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               {(Object.keys(THEME_MAP) as CanvasTheme[]).map((t) => (
                 <button 
                   key={t} 
                   onClick={() => setTheme(t)} 
                   title={THEME_MAP[t].label}
-                  className={`relative w-8 h-8 rounded-full border-2 transition-all p-0.5 ${theme === t ? 'border-red-500 scale-110 shadow-md ring-4 ring-red-500/10' : 'border-gray-100 hover:border-gray-300'}`}
+                  className={`relative w-7 h-7 rounded-full border-2 transition-all p-0 ${theme === t ? 'border-red-500 scale-105 shadow-md ring-2 ring-red-500/10' : 'border-gray-100 hover:border-gray-300'}`}
                 >
                   <div className="w-full h-full rounded-full border border-black/5" style={{ backgroundColor: THEME_MAP[t].bg }} />
                 </button>
@@ -524,7 +537,7 @@ export default function App() {
             <div className="flex items-center gap-2 text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em]"><Settings2 className="w-3 h-3" /> 尺寸与字号</div>
             <div className="grid grid-cols-2 gap-2">
               {(Object.keys(RATIO_MAP) as CanvasRatio[]).map((r) => (
-                <button key={r} onClick={() => setRatio(r)} className={`py-2 px-3 text-[10px] rounded-xl border-2 font-black uppercase ${ratio === r ? 'border-red-500 bg-red-50 text-red-600' : 'bg-white border-gray-100 text-gray-400'}`}>
+                <button key={r} onClick={() => setRatio(r)} className={`py-1.5 px-3 text-[10px] rounded-xl border-2 font-black uppercase ${ratio === r ? 'border-red-500 bg-red-50 text-red-600' : 'bg-white border-gray-100 text-gray-400'}`}>
                   {RATIO_MAP[r].label}
                 </button>
               ))}
@@ -535,18 +548,10 @@ export default function App() {
             </div>
           </div>
 
-          <button
-            onClick={exportAll}
-            disabled={isProcessing || (pages.length === 0 && !title)}
-            className="w-full py-5 mt-2 bg-gray-900 text-white rounded-[24px] font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-black active:scale-[0.98] transition-all shadow-xl shadow-gray-200 disabled:bg-gray-200"
-          >
-            {isProcessing ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Download className="w-5 h-5" />}
-            打包下载长图文 ({totalPreviewPages}P)
-          </button>
         </section>
       </aside>
 
-      <main className="flex-1 relative flex flex-col items-center justify-center bg-[#F8F9FB] overflow-hidden">
+      <main className="flex-1 relative flex flex-col items-center justify-start bg-[#F8F9FB] overflow-hidden p-6">
         {!hasCover && pages.length === 0 ? (
           <div className="flex flex-col items-center justify-center text-center opacity-20 max-w-sm">
             <div className="w-24 h-24 bg-gray-200 rounded-full flex items-center justify-center mb-6"><TypeIcon className="w-12 h-12 text-gray-400" /></div>
@@ -554,27 +559,27 @@ export default function App() {
             <p className="text-xs font-medium">在左侧输入内容，我们将为您自动生成符合小红书风格的多页文字卡片。</p>
           </div>
         ) : (
-          <div className="w-full h-full flex flex-col items-center justify-center p-10 select-none overflow-hidden" style={{ perspective: '1200px' }}>
+          <div className="w-full h-full flex flex-col items-center justify-start p-6 select-none overflow-hidden" style={{ perspective: '1200px' }}>
             {totalPreviewPages > 1 && (
               <>
                 <button 
                   onClick={() => setCurrentPreviewIndex(prev => Math.max(0, prev - 1))}
                   disabled={currentPreviewIndex === 0}
-                  className="absolute left-12 z-30 p-5 bg-white/90 backdrop-blur-xl rounded-full shadow-2xl border border-gray-100 text-gray-400 hover:text-red-500 hover:scale-110 active:scale-95 transition-all duration-300 disabled:opacity-0 disabled:pointer-events-none"
+                  className="absolute left-6 top-1/2 -translate-y-1/2 z-30 p-3 bg-white/95 backdrop-blur-xl rounded-full shadow-xl border border-gray-100 text-gray-500 hover:text-red-500 hover:scale-110 active:scale-95 transition-all duration-300 disabled:opacity-0 disabled:pointer-events-none"
                 >
-                  <ChevronLeft className="w-10 h-10" />
+                  <ChevronLeft className="w-6 h-6" />
                 </button>
                 <button 
                   onClick={() => setCurrentPreviewIndex(prev => Math.min(totalPreviewPages - 1, prev + 1))}
                   disabled={currentPreviewIndex === totalPreviewPages - 1}
-                  className="absolute right-12 z-30 p-5 bg-white/90 backdrop-blur-xl rounded-full shadow-2xl border border-gray-100 text-gray-400 hover:text-red-500 hover:scale-110 active:scale-95 transition-all duration-300 disabled:opacity-0 disabled:pointer-events-none"
+                  className="absolute right-6 top-1/2 -translate-y-1/2 z-30 p-3 bg-white/95 backdrop-blur-xl rounded-full shadow-xl border border-gray-100 text-gray-500 hover:text-red-500 hover:scale-110 active:scale-95 transition-all duration-300 disabled:opacity-0 disabled:pointer-events-none"
                 >
-                  <ChevronRight className="w-10 h-10" />
+                  <ChevronRight className="w-6 h-6" />
                 </button>
               </>
             )}
 
-            <div className="relative w-full h-[85%] flex items-center justify-center overflow-hidden">
+            <div className="relative w-full flex-1 min-h-0 flex items-center justify-center overflow-hidden">
               <div 
                 className="flex h-full will-change-transform"
                 style={{ 
@@ -625,7 +630,7 @@ export default function App() {
                               )}
                             </div>
                             <div className="h-[58%] w-full px-[100px] py-[80px] flex flex-col justify-start overflow-hidden">
-                              <h1 style={{ fontSize: `${fontSize * 2.3}px`, lineHeight: 1.1, fontWeight: 900, color: currentTheme.title, marginBottom: '60px', textAlign: 'left', wordBreak: 'break-all' }}>
+                              <h1 style={{ fontSize: `${fontSize * 2.3}px`, lineHeight: 1.1, fontWeight: 900, color: currentTheme.title, marginBottom: '60px', textAlign: 'left', wordBreak: 'break-all', fontFamily: "'FZXiaoBiaoSong', 'Noto Serif SC', serif" }}>
                                 {title || coverData?.title || '未命名标题'}
                               </h1>
                               <div style={{ maxHeight: '400px', overflow: 'hidden' }}>
@@ -636,8 +641,8 @@ export default function App() {
                                   paddingLeft: '44px', 
                                   lineHeight: 1.9,
                                   fontStyle: 'normal',
-                                  fontFamily: "'Noto Serif SC', serif",
-                                  fontWeight: 400
+                                  fontFamily: "'FZXiaoBiaoSong', 'Noto Serif SC', serif",
+                                  fontWeight: 500
                                 }}>
                                   {coverData?.abstract || '等待生成摘要...'}
                                 </blockquote>
@@ -667,7 +672,6 @@ export default function App() {
                           transition: 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.6s ease'
                         }}
                       >
-                        <span className="text-[10px] font-black text-gray-400 tracking-[0.4em] uppercase bg-white/50 px-4 py-1.5 rounded-full shadow-sm">Page {index + 1}</span>
                         <div 
                           className="relative shadow-[0_50px_100px_-20px_rgba(0,0,0,0.15)] overflow-hidden rounded-sm bg-white"
                           style={{ width: `${RATIO_MAP[ratio].width * 0.45}px`, height: `${RATIO_MAP[ratio].height * 0.45}px` }}
@@ -677,7 +681,7 @@ export default function App() {
                               {page.blocks.map((block, bIdx) => (
                                 <div key={bIdx} style={{ 
                                   fontSize: `${fontSize * (block.type === 'title' ? 1.4 : 1)}px`,
-                                  fontWeight: block.type === 'title' ? 900 : 400,
+                                  fontWeight: block.type === 'title' ? 900 : 500,
                                   lineHeight: block.type === 'title' ? 1.3 : 1.9,
                                   marginBottom: '1.5em',
                                   color: block.type === 'title' ? currentTheme.title : block.type === 'quote' ? currentTheme.quote : currentTheme.text,
@@ -700,7 +704,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="mt-8 flex flex-col items-center gap-5">
+            <div className="mt-2 flex flex-col items-center gap-3">
               <div className="px-5 py-2.5 bg-white rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
                 <span className="text-[10px] font-black text-gray-300 uppercase tracking-[0.2em]">Preview Frame</span>
                 <span className="text-sm font-black text-red-500 tabular-nums">{currentPreviewIndex + 1} <span className="text-gray-200">/</span> {totalPreviewPages}</span>

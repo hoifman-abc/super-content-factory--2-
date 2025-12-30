@@ -2168,11 +2168,13 @@ const ProjectDetailView: React.FC<{
   const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
   const [editingPrompt, setEditingPrompt] = useState('');
   const [showLongformTool, setShowLongformTool] = useState(false);
-  const [longformContext, setLongformContext] = useState<{ ratio?: string; prompt?: string; selectedMaterialIds: string[]; selectedWorkIds: string[] }>({
+  const [longformContext, setLongformContext] = useState<{ ratio?: string; prompt?: string; selectedMaterialIds: string[]; selectedWorkIds: string[]; title?: string; text?: string }>({
     ratio: '3:4',
     prompt: '',
     selectedMaterialIds: [],
-    selectedWorkIds: []
+    selectedWorkIds: [],
+    title: '',
+    text: ''
   });
 
   const handleCloseLongformTool = () => {
@@ -2408,11 +2410,22 @@ const ProjectDetailView: React.FC<{
   const handleGenerateTemplate = () => {
     if (!selectedTemplate) return;
     if (selectedTemplate.id === 't-longform-image') {
+      const selectedWorksArr = works.filter(w => selectedWorkIds.has(w.id));
+      const projectMaterials = project.items.filter(i => selectedContextIds.has(i.id));
+      const mockMaterials = MOCK_MATERIALS.filter(m => selectedContextIds.has(m.id));
+
+      const primaryTitle = selectedWorksArr[0]?.title || projectMaterials[0]?.title || mockMaterials[0]?.title || '';
+      const workBodies = selectedWorksArr.map(w => w.content || '').filter(Boolean);
+      const materialBodies = [...projectMaterials, ...mockMaterials].map((m: any) => m.content || '').filter(Boolean);
+      const combinedText = [...workBodies, ...materialBodies].filter(Boolean).join('\n\n');
+
       const state = {
         ratio: longFormAspect,
         prompt: templatePrompts[selectedTemplate.id] || selectedTemplate.description,
         selectedMaterialIds: Array.from(selectedContextIds),
         selectedWorkIds: Array.from(selectedWorkIds),
+        title: primaryTitle,
+        text: combinedText
       };
       setLongformContext(state);
       setShowLongformTool(true);
@@ -3187,11 +3200,25 @@ const ProjectDetailView: React.FC<{
         <div className="flex-1 flex flex-col bg-white rounded-2xl shadow-sm border border-gray-200/50 overflow-hidden relative min-w-[400px]">
           {showLongformTool && (
             <div className="absolute inset-0 z-30 bg-white overflow-y-auto">
-              <div className="flex justify-end p-4">
+              <div className="flex justify-end items-center gap-3 p-4">
+                <button
+                  className="w-11 h-11 rounded-2xl border border-gray-200 bg-white text-gray-500 hover:text-indigo-600 hover:border-indigo-100 shadow-sm flex items-center justify-center transition-all"
+                  title="??? Works"
+                  onClick={() => {}}
+                >
+                  <SaveIcon className="w-5 h-5" />
+                </button>
+                <button
+                  className="w-11 h-11 rounded-2xl border border-gray-200 bg-gray-900 text-white hover:bg-black shadow-lg shadow-gray-200 flex items-center justify-center transition-all disabled:bg-gray-200 disabled:text-gray-400"
+                  title="???????"
+                  onClick={() => window.dispatchEvent(new Event('xhs-longimage-download'))}
+                >
+                  <DownloadIcon className="w-5 h-5" />
+                </button>
                 <button
                   onClick={handleCloseLongformTool}
                   className="w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center shadow-sm border border-gray-200"
-                  title="关闭长图文工具"
+                  title="???????"
                 >
                   <XIcon className="w-4 h-4" />
                 </button>
@@ -3202,6 +3229,8 @@ const ProjectDetailView: React.FC<{
                   prompt={longformContext.prompt}
                   selectedMaterialIds={longformContext.selectedMaterialIds}
                   selectedWorkIds={longformContext.selectedWorkIds}
+                  initialTitle={longformContext.title}
+                  initialText={longformContext.text}
                 />
               </div>
             </div>
@@ -3235,39 +3264,7 @@ const ProjectDetailView: React.FC<{
                            <p className="text-lg text-gray-500 mb-8 leading-relaxed">
                                {selectedTemplate.description}
                            </p>
-                               {selectedTemplate.id === 't-longform-image' && (
-                             <div className="w-full space-y-4 mb-8">
-                               <div className="flex items-center justify-between">
-                                 <span className="text-sm font-semibold text-gray-900">默认尺寸</span>
-                                 <span className="text-xs text-gray-400">3:4 / 16:9 / 1:1</span>
-                               </div>
-                               <div className="grid grid-cols-3 gap-3">
-                                 {LONGFORM_ASPECTS.map(option => (
-                                   <button
-                                     key={option.id}
-                                     onClick={() => setLongFormAspect(option.id)}
-                                     className={`text-left border rounded-xl px-3 py-2.5 transition-all bg-white ${longFormAspect === option.id ? 'border-gray-900 text-gray-900 shadow-sm' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
-                                   >
-                                     <div className="flex items-center gap-2 mb-1">
-                                       <span className={`inline-flex items-center justify-center rounded ${option.id === '1:1' ? 'w-6 h-6' : option.id === '16:9' ? 'w-7 h-4' : 'w-4 h-7'} bg-gray-100 border border-gray-200`}></span>
-                                       <span className="font-semibold text-sm">{option.label}</span>
-                                     </div>
-                                     <div className="text-[11px] text-gray-400">{option.hint}</div>
-                                   </button>
-                                 ))}
-                               </div>
-                               <div className="space-y-2">
-                                 <div className="flex items-center justify-between">
-                                    <span className="text-sm font-semibold text-gray-900">模板</span>
-                                    <span className="text-xs text-gray-400">预留位</span>
-                                 </div>
-                                 <div className="border border-dashed border-gray-300 rounded-xl p-3 bg-gray-50/60 text-left">
-                                    <div className="text-sm font-medium text-gray-700">模板占位</div>
-                                    <p className="text-xs text-gray-500 mt-1 leading-relaxed">后续可接入长图文模板；当前逻辑与其他模块一致，已支持多选资料并调用图片生成流程。</p>
-                                 </div>
-                               </div>
-                             </div>
-                           )}
+                               {selectedTemplate.id === 't-longform-image' && null}
                            <div className="w-full bg-blue-50/50 border border-blue-100 rounded-xl p-4 mb-10 flex flex-col gap-2 text-blue-800">
                                <div className="flex items-center gap-2">
                                  <CheckSquareIcon className="w-5 h-5" />
