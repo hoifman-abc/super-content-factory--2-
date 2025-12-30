@@ -377,35 +377,49 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
     }
   };
 
+  const renderAllPagesToImages = useCallback(async () => {
+    if (pages.length === 0 && !title) return [];
+    const hasCover = title || coverData;
+    const rendered: { fileName: string; dataUrl: string }[] = [];
+
+    if (hasCover) {
+      const coverEl = document.getElementById('page-cover');
+      if (coverEl) {
+        const dataUrl = await toPng(coverEl, { 
+          pixelRatio: 2,
+          backgroundColor: currentTheme.bg,
+          style: { transform: 'scale(1)', margin: '0', padding: '0' }
+        });
+        rendered.push({ fileName: 'xhs_page_1_cover.png', dataUrl });
+      }
+    }
+
+    for (let i = 0; i < pages.length; i++) {
+      const element = document.getElementById(`page-${i}`);
+      if (element) {
+        const dataUrl = await toPng(element, { 
+          pixelRatio: 2,
+          backgroundColor: currentTheme.bg,
+          style: { transform: 'scale(1)', margin: '0', padding: '0' }
+        });
+        rendered.push({ fileName: `xhs_page_${hasCover ? i + 2 : i + 1}.png`, dataUrl });
+      }
+    }
+    return rendered;
+  }, [pages, title, coverData, currentTheme.bg]);
+
   const exportAll = async () => {
-    if (pages.length === 0 && !title) return;
     setIsProcessing(true);
+    const renderedImages = await renderAllPagesToImages();
+    if (renderedImages.length === 0) {
+      setIsProcessing(false);
+      return;
+    }
     const zip = new JSZip();
     try {
-      const hasCover = title || coverData;
-      if (hasCover) {
-        const coverEl = document.getElementById('page-cover');
-        if (coverEl) {
-          const dataUrl = await toPng(coverEl, { 
-            pixelRatio: 2,
-            backgroundColor: currentTheme.bg,
-            style: { transform: 'scale(1)', margin: '0', padding: '0' }
-          });
-          zip.file(`xhs_page_1_cover.png`, dataUrl.split(',')[1], { base64: true });
-        }
-      }
-
-      for (let i = 0; i < pages.length; i++) {
-        const element = document.getElementById(`page-${i}`);
-        if (element) {
-          const dataUrl = await toPng(element, { 
-            pixelRatio: 2,
-            backgroundColor: currentTheme.bg,
-            style: { transform: 'scale(1)', margin: '0', padding: '0' }
-          });
-          zip.file(`xhs_page_${hasCover ? i + 2 : i + 1}.png`, dataUrl.split(',')[1], { base64: true });
-        }
-      }
+      renderedImages.forEach(img => {
+        zip.file(img.fileName, img.dataUrl.split(',')[1], { base64: true });
+      });
       const content = await zip.generateAsync({ type: 'blob' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(content);
@@ -423,6 +437,32 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
     window.addEventListener('xhs-longimage-download', handleDownload);
     return () => window.removeEventListener('xhs-longimage-download', handleDownload);
   }, [exportAll]);
+
+  useEffect(() => {
+    const handleSave = async (evt: Event) => {
+      const event = evt as CustomEvent<{ onSave?: (payload: { title?: string; text?: string; images: string[]; coverImage?: string }) => void; onError?: (msg?: string) => void }>;
+      try {
+        const renderedImages = await renderAllPagesToImages();
+        if (renderedImages.length === 0) {
+          event.detail?.onError?.('暂无可保存的图片');
+          return;
+        }
+        const images = renderedImages.map(img => img.dataUrl);
+        event.detail?.onSave?.({
+          title,
+          text,
+          images,
+          coverImage: coverData?.imageUrl || images[0],
+        });
+      } catch (error) {
+        console.error(error);
+        event.detail?.onError?.('保存图片失败，请重试');
+      }
+    };
+
+    window.addEventListener('xhs-longimage-save', handleSave as EventListener);
+    return () => window.removeEventListener('xhs-longimage-save', handleSave as EventListener);
+  }, [renderAllPagesToImages, title, text, coverData]);
 
   const PageDecoration = ({ pageNum }: { pageNum: string }) => {
     return (
