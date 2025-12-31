@@ -544,6 +544,7 @@ const SHORTCUT_STORAGE_KEY = 'scf-shortcuts-v1';
 const PROJECT_STORAGE_KEY = 'scf-projects-v1';
 const WORKS_STORAGE_KEY = 'scf-works-v1';
 const CHAT_HISTORY_KEY_PREFIX = 'scf-chat-history-v1-';
+const SHORTCUT_ACTIVE_KEY = 'scf-shortcuts-active-v1';
 
 const DEFAULT_SHORTCUT_COMMANDS: ShortcutCommand[] = [
   { id: 'cmd1', name: 'Summarize', icon: 'text', prompt: 'Please summarize the following content concisely:', agentMode: 'ask', modelId: 'gpt-4o' },
@@ -567,6 +568,19 @@ const renderShortcutIcon = (icon?: ShortcutCommand['icon']) => {
 };
 
 // --- DASHBOARD TYPES & DATA ---
+
+const readStoredShortcuts = (): ShortcutCommand[] => {
+  if (typeof window === 'undefined') return DEFAULT_SHORTCUT_COMMANDS;
+  const stored = window.localStorage.getItem(SHORTCUT_STORAGE_KEY);
+  if (!stored) return DEFAULT_SHORTCUT_COMMANDS;
+  try {
+    const parsed = JSON.parse(stored);
+    if (Array.isArray(parsed) && parsed.length > 0) return parsed as ShortcutCommand[];
+  } catch (err) {
+    console.warn('Failed to parse shortcuts from storage', err);
+  }
+  return DEFAULT_SHORTCUT_COMMANDS;
+};
 
 interface ProjectItem {
   id: string;
@@ -2712,8 +2726,13 @@ const ProjectDetailView: React.FC<{
   const shortcutAgentMenuRef = useRef<HTMLDivElement>(null);
   const shortcutModelSelectorRef = useRef<HTMLDivElement>(null);
   const shortcutImageStyleSelectorRef = useRef<HTMLDivElement>(null);
-  const [shortcuts, setShortcuts] = useState<ShortcutCommand[]>(DEFAULT_SHORTCUT_COMMANDS);
-  const [activeShortcutId, setActiveShortcutId] = useState<string | null>(DEFAULT_SHORTCUT_COMMANDS[0]?.id || null);
+  const [shortcuts, setShortcuts] = useState<ShortcutCommand[]>(() => readStoredShortcuts());
+  const [activeShortcutId, setActiveShortcutId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return readStoredShortcuts()[0]?.id || null;
+    const storedActive = window.localStorage.getItem(SHORTCUT_ACTIVE_KEY);
+    if (storedActive) return storedActive;
+    return readStoredShortcuts()[0]?.id || null;
+  });
   const [showShortcutOverlay, setShowShortcutOverlay] = useState(false);
   const [showShortcutAgentMenu, setShowShortcutAgentMenu] = useState(false);
   const [showShortcutModelSelector, setShowShortcutModelSelector] = useState(false);
@@ -2852,31 +2871,32 @@ const ProjectDetailView: React.FC<{
     };
   }, [isFilterOpen]);
 
-  // Load & persist shortcuts
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const stored = window.localStorage.getItem(SHORTCUT_STORAGE_KEY);
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored) as ShortcutCommand[];
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setShortcuts(parsed);
-          setActiveShortcutId(parsed[0]?.id || null);
-        }
-      } catch (err) {
-        console.warn('Failed to parse shortcuts from storage', err);
-      }
-    }
-  }, []);
-
+  // Load & persist shortcuts (with active id)
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
       window.localStorage.setItem(SHORTCUT_STORAGE_KEY, JSON.stringify(shortcuts));
+      if (activeShortcutId) {
+        window.localStorage.setItem(SHORTCUT_ACTIVE_KEY, activeShortcutId);
+      }
     } catch (err) {
       console.warn('Failed to persist shortcuts', err);
     }
-  }, [shortcuts]);
+  }, [shortcuts, activeShortcutId]);
+
+  // Sync shortcuts across tabs / when storage is cleared
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === SHORTCUT_STORAGE_KEY) {
+        setShortcuts(readStoredShortcuts());
+      }
+      if (e.key === SHORTCUT_ACTIVE_KEY) {
+        setActiveShortcutId(e.newValue || null);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   // Sync edit content when selected material changes
   useEffect(() => {
