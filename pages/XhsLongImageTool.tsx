@@ -33,6 +33,8 @@ type XhsLongImageToolProps = {
   initialText?: string;
 };
 
+const SONG_FONT_STACK = "'FZXiaoBiaoSong', 'Songti SC', 'Noto Serif SC', 'SimSun', serif";
+
 export default function App({ initialTitle, initialText }: XhsLongImageToolProps) {
   const [title, setTitle] = useState<string>('');
   const [text, setText] = useState<string>('');
@@ -148,22 +150,22 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
           </mark>
         );
       }
-      return <span key={i} style={{ fontWeight: 400 }}>{part}</span>;
+      return <span key={i}>{part}</span>;
     });
   };
 
   const getBlockHTML = (block: ContentBlock, fSize: number) => {
     const lineH = 1.9; 
-    let style = `font-size: ${fSize}px; line-height: ${lineH}; margin-bottom: 1.5em; white-space: pre-wrap; word-break: break-all; font-family: 'Noto Serif SC', serif; font-weight: 500;`;
+    let style = `font-size: ${fSize}px; line-height: ${lineH}; margin-bottom: 1.5em; white-space: pre-wrap; word-break: break-all; font-family: ${SONG_FONT_STACK}; font-weight: 600;`;
     const highlightBg = theme === CanvasTheme.DARK ? 'rgba(180, 83, 9, 0.4)' : 'rgba(254, 249, 195, 0.8)';
     
     let content = block.text.replace(/==(.*?)==/g, `<mark style="background-color: ${highlightBg}; color: inherit; font-weight: 900; padding: 2px 6px; border-radius: 4px; text-decoration: underline; text-underline-offset: 4px;">$1</mark>`);
     
     if (block.type === 'title') {
-      style = `font-size: ${fSize * 1.4}px; font-weight: 900; margin-bottom: 1em; line-height: 1.3; font-family: 'FZXiaoBiaoSong', 'Noto Serif SC', serif;`;
+      style = `font-size: ${fSize * 1.4}px; font-weight: 900; margin-bottom: 1em; line-height: 1.3; font-family: ${SONG_FONT_STACK};`;
       return `<h2 style="${style}">${content}</h2>`;
     } else if (block.type === 'quote') {
-      style = `font-size: ${fSize}px; border-left: 8px solid #ddd; padding-left: 30px; margin-bottom: 1.5em; line-height: ${lineH}; font-family: 'Noto Serif SC', serif; font-weight: 500;`;
+      style = `font-size: ${fSize}px; border-left: 8px solid #ddd; padding-left: 30px; margin-bottom: 1.5em; line-height: ${lineH}; font-family: ${SONG_FONT_STACK}; font-weight: 600;`;
       return `<blockquote style="${style}">${content}</blockquote>`;
     }
     return `<p style="${style}">${content}</p>`;
@@ -494,7 +496,7 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
   };
 
   return (
-    <div className="h-[calc(100vh-64px)] flex flex-col md:flex-row bg-[#F2F4F7] text-gray-900 overflow-hidden font-['Noto_Serif_SC',serif]">
+    <div className="h-[calc(100vh-64px)] flex flex-col md:flex-row bg-[#F2F4F7] text-gray-900 overflow-hidden" style={{ fontFamily: SONG_FONT_STACK }}>
       <aside className="h-full w-full md:w-[420px] bg-white border-r border-gray-200 px-5 pt-2 pb-4 flex flex-col gap-3 overflow-y-auto z-20 shadow-xl">
         <section className="space-y-3">
           <div className="space-y-2">
@@ -643,7 +645,7 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
                         className="relative shadow-[0_50px_100px_-20px_rgba(0,0,0,0.2)] overflow-hidden rounded-sm bg-white"
                         style={{ width: `${RATIO_MAP[ratio].width * 0.45}px`, height: `${RATIO_MAP[ratio].height * 0.45}px` }}
                       >
-                        <div id="page-cover" style={{ width: `${RATIO_MAP[ratio].width}px`, height: `${RATIO_MAP[ratio].height}px`, backgroundColor: currentTheme.bg, transform: 'scale(0.45)', transformOrigin: 'top left', display: 'flex', flexDirection: 'column', fontFamily: "'FZXiaoBiaoSong', 'Noto Serif SC', serif", position: 'relative' }}>
+                        <div id="page-cover" style={{ width: `${RATIO_MAP[ratio].width}px`, height: `${RATIO_MAP[ratio].height}px`, backgroundColor: currentTheme.bg, transform: 'scale(0.45)', transformOrigin: 'top left', display: 'flex', flexDirection: 'column', fontFamily: SONG_FONT_STACK, position: 'relative' }}>
                           <div className="flex flex-col h-full w-full">
                             <div 
                               className={`h-[42%] w-full overflow-hidden relative border-b-8 border-black/5 bg-gray-50 flex items-center justify-center group cursor-pointer transition-all ${isRegeneratingImage ? 'opacity-50 pointer-events-none' : ''}`}
@@ -670,7 +672,7 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
                               )}
                             </div>
                             <div className="h-[58%] w-full px-[100px] py-[80px] flex flex-col justify-start overflow-hidden">
-                              <h1 style={{ fontSize: `${fontSize * 2.3}px`, lineHeight: 1.1, fontWeight: 900, color: currentTheme.title, marginBottom: '60px', textAlign: 'left', wordBreak: 'break-all', fontFamily: "'FZXiaoBiaoSong', 'Noto Serif SC', serif" }}>
+                              <h1 style={{ fontSize: `${fontSize * 2.3}px`, lineHeight: 1.1, fontWeight: 900, color: currentTheme.title, marginBottom: '60px', textAlign: 'left', wordBreak: 'break-all', fontFamily: SONG_FONT_STACK }}>
                                 {title || coverData?.title || '未命名标题'}
                               </h1>
                               <div style={{ maxHeight: '400px', overflow: 'hidden' }}>
@@ -681,8 +683,8 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
                                   paddingLeft: '44px', 
                                   lineHeight: 1.9,
                                   fontStyle: 'normal',
-                                  fontFamily: "'FZXiaoBiaoSong', 'Noto Serif SC', serif",
-                                  fontWeight: 500
+                                  fontFamily: SONG_FONT_STACK,
+                                  fontWeight: 600
                                 }}>
                                   {coverData?.abstract || '等待生成摘要...'}
                                 </blockquote>
@@ -721,14 +723,14 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
                               {page.blocks.map((block, bIdx) => (
                                 <div key={bIdx} style={{ 
                                   fontSize: `${fontSize * (block.type === 'title' ? 1.4 : 1)}px`,
-                                  fontWeight: block.type === 'title' ? 900 : 500,
+                                  fontWeight: block.type === 'title' ? 900 : 600,
                                   lineHeight: block.type === 'title' ? 1.3 : 1.9,
                                   marginBottom: '1.5em',
                                   color: block.type === 'title' ? currentTheme.title : block.type === 'quote' ? currentTheme.quote : currentTheme.text,
                                   borderLeft: block.type === 'quote' ? `10px solid ${currentTheme.quoteBorder}` : 'none',
                                   paddingLeft: block.type === 'quote' ? '40px' : '0',
                                   textAlign: 'justify',
-                                  fontFamily: block.type === 'title' ? "'FZXiaoBiaoSong', 'Noto Serif SC', serif" : "'Noto Serif SC', serif"
+                                  fontFamily: SONG_FONT_STACK
                                 }}>
                                   {renderRichText(block.text)}
                                 </div>
