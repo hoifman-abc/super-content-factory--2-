@@ -207,19 +207,45 @@ interface WechatAccount {
   status?: string;
 }
 
-const WECHAT_OPENAPI_BASE = 'https://wx.limyai.com/api/openapi';
+// 在开发环境走本地代理，避免浏览器直连跨域；生产仍直连真实域名
+const WECHAT_REMOTE_BASE = 'https://wx.limyai.com/api/openapi';
+const WECHAT_OPENAPI_BASE =
+  (import.meta as any)?.env?.DEV ? '/wechat-openapi' : WECHAT_REMOTE_BASE;
 const WECHAT_OPENAPI_KEY = (import.meta as any)?.env?.VITE_WECHAT_OPENAPI_KEY || (import.meta as any)?.env?.VITE_WECHAT_API_KEY || '';
 const WECHAT_PROXY_URL = (import.meta as any)?.env?.VITE_WECHAT_PROXY_URL || '';
 
 const XHS_PUBLISH_BASE = 'https://note.limyai.com/api/openapi';
 const XHS_PUBLISH_API_KEY = (import.meta as any)?.env?.VITE_XHS_PUBLISH_API_KEY || '';
 
+const normalizeToRemote = (url: string) => {
+  if (url.startsWith('http')) return url;
+  // 将 /wechat-openapi/xx 还原为真实域名路径，避免代理链路二次拼接前缀
+  return `${WECHAT_REMOTE_BASE}${url.replace(/^\/wechat-openapi/, '')}`;
+};
+
 const fetchWithProxyFallback = async (url: string, options: RequestInit) => {
+  const remoteUrl = normalizeToRemote(url);
+  // 1) 先按原始 URL 请求（dev 走 Vite 代理）
   try {
-    return await fetch(url, options);
+    const res = await fetch(url, options);
+    if (res.ok) return res;
+    // 2) 若非 2xx，再直接请求真实域名（绕过 dev 代理 502 的情况）
+    if (remoteUrl !== url) {
+      const direct = await fetch(remoteUrl, options);
+      if (direct.ok) return direct;
+      // 3) 若配置了外部代理，再尝试代理真实域名
+      if (WECHAT_PROXY_URL) {
+        const proxied = `${WECHAT_PROXY_URL}${encodeURIComponent(remoteUrl)}`;
+        return await fetch(proxied, options);
+      }
+      return direct;
+    }
+    // 4) 没有额外路由可试，直接返回
+    return res;
   } catch (err) {
+    // 捕获网络错误，尝试外部代理
     if (!WECHAT_PROXY_URL) throw err;
-    const proxied = `${WECHAT_PROXY_URL}${encodeURIComponent(url)}`;
+    const proxied = `${WECHAT_PROXY_URL}${encodeURIComponent(remoteUrl)}`;
     return await fetch(proxied, options);
   }
 };
@@ -249,8 +275,17 @@ const postWechat = async (path: string, payload: any) => {
 };
 
 const fetchWechatAccounts = async (): Promise<WechatAccount[]> => {
-  const data = await postWechat('/wechat-accounts', {});
-  return data?.data?.accounts || [];
+  try {
+    const data = await postWechat('/wechat-accounts', {});
+    return data?.data?.accounts || [];
+  } catch (err) {
+    // 开发环境兜底：接口跨域/502 时返回空数组，避免阻塞 UI（生产仍抛错）
+    if ((import.meta as any)?.env?.DEV) {
+      console.warn('fetchWechatAccounts fallback (dev only):', err);
+      return [];
+    }
+    throw err;
+  }
 };
 
 type PublishXhsPayload = {
@@ -2372,8 +2407,12 @@ const WorkPreviewView: React.FC<{ work: Work; onBack: () => void; onSelectText?:
             {images.length > 0 && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
                 {images.map((img, idx) => (
-                  <div key={idx} className="w-full h-56 bg-gray-50 rounded-xl overflow-hidden border border-gray-100">
-                    <img src={img} alt={`${work.title || 'Work'} image ${idx + 1}`} className="w-full h-full object-cover" />
+                  <div key={idx} className="w-full bg-gray-50 rounded-xl overflow-hidden border border-gray-100">
+                    <img
+                      src={img}
+                      alt={`${work.title || 'Work'} image ${idx + 1}`}
+                      className="w-full h-auto object-contain bg-white"
+                    />
                   </div>
                 ))}
               </div>
@@ -2434,7 +2473,7 @@ const ProjectDetailView: React.FC<{
   });
 
   const [activeTab, setActiveTab] = useState<'chat' | 'materials' | 'works'>('materials');
-  const [selectedContextIds, setSelectedContextIds] = useState<Set<string>>(new Set(['1', '2', '3'])); 
+  const [selectedContextIds, setSelectedContextIds] = useState<Set<string>>(new Set()); 
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [selectedWork, setSelectedWork] = useState<Work | null>(null);
   const [showProjectDropdown, setShowProjectDropdown] = useState(false);
@@ -2459,13 +2498,6 @@ const ProjectDetailView: React.FC<{
     text: ''
   });
   const [isSavingLongformWork, setIsSavingLongformWork] = useState(false);
-
-  const handleCloseLongformTool = () => {
-    setShowLongformTool(false);
-    setSelectedTemplate(null);
-    setWorksListMode('works');
-    setIsSavingLongformWork(false);
-  };
 
   // Chat History
   const [chatHistory, setChatHistory] = useState<any[]>([]);
@@ -2526,6 +2558,21 @@ const ProjectDetailView: React.FC<{
   const [showRefPicker, setShowRefPicker] = useState(false);
   const refPickerRef = useRef<HTMLButtonElement>(null);
   const pickerContainerRef = useRef<HTMLDivElement>(null);
+
+  function resetTemplateSelections() {
+    setSelectedContextIds(new Set());
+    setSelectedWorkIds(new Set());
+    setSelectedWork(null);
+    setChatReferences([]);
+  }
+
+  const handleCloseLongformTool = () => {
+    setShowLongformTool(false);
+    setSelectedTemplate(null);
+    setWorksListMode('works');
+    resetTemplateSelections();
+    setIsSavingLongformWork(false);
+  };
 
   // Shortcut Menu State
   const [showShortcutMenu, setShowShortcutMenu] = useState(false);
@@ -3582,7 +3629,7 @@ const ProjectDetailView: React.FC<{
                   {/* ... (Template View Content) ... */}
                   <div className="w-full max-w-lg">
                       <button 
-                        onClick={() => { setSelectedTemplate(null); setWorksListMode('works'); }} 
+                        onClick={() => { resetTemplateSelections(); setSelectedTemplate(null); setWorksListMode('works'); }} 
                         className="absolute top-6 left-6 p-2 rounded-full hover:bg-gray-100 text-gray-500 lg:hidden"
                       >
                         <ArrowRightIcon className="w-5 h-5 rotate-180" />
@@ -3615,7 +3662,7 @@ const ProjectDetailView: React.FC<{
                                 variant="secondary" 
                                 size="lg" 
                                 className="flex-1 rounded-full border-gray-300 py-3" 
-                                onClick={() => { setSelectedTemplate(null); setWorksListMode('works'); }}
+                                onClick={() => { resetTemplateSelections(); setSelectedTemplate(null); setWorksListMode('works'); }}
                               >
                                 Cancel
                               </Button>
@@ -3642,6 +3689,7 @@ const ProjectDetailView: React.FC<{
                               <div 
                                  key={template.id} 
                                  onClick={() => {
+                                   resetTemplateSelections();
                                     setSelectedTemplate(template);
                                     if (template.id === 't-longform-image') {
                                       setWorksListMode('works');

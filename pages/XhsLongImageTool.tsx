@@ -1,6 +1,5 @@
 ﻿
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { GoogleGenAI, Type } from '@google/genai';
 import { toPng } from 'html-to-image';
 import JSZip from 'jszip';
 import { 
@@ -34,6 +33,59 @@ type XhsLongImageToolProps = {
 };
 
 const SONG_FONT_STACK = "'FZXiaoBiaoSong', 'Songti SC', 'Noto Serif SC', 'SimSun', serif";
+const OPENROUTER_BASE_URL = import.meta.env.VITE_OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
+const OPENROUTER_SITE_URL = import.meta.env.VITE_OPENROUTER_SITE_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+const OPENROUTER_IMAGE_MODEL = import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_2_5_FLASH_IMAGE || 'google/gemini-2.5-flash-image';
+const OPENROUTER_TEXT_MODEL = import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_3_PRO || import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_2_5_PRO || 'google/gemini-2.5-pro';
+
+const callOpenRouterJson = async (prompt: string, model: string = OPENROUTER_TEXT_MODEL) => {
+  const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error('缺少 OpenRouter Key，请在 .env.local 配置 VITE_OPENROUTER_API_KEY');
+
+  const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+      'HTTP-Referer': OPENROUTER_SITE_URL,
+      'X-Title': 'Super Content Factory'
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.8
+    })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(errText || response.statusText);
+  }
+
+  const data: any = await response.json();
+  const content = data?.choices?.[0]?.message?.content;
+  const text = Array.isArray(content) ? content.map((c: any) => c.text || '').join('\n') : (content?.toString?.() || '');
+  return text.trim();
+};
+
+const parseJsonFromText = (text: string) => {
+  try {
+    const stripped = text
+      .replace(/```(?:json)?/gi, '')
+      .replace(/```/g, '')
+      .trim();
+    const firstBrace = stripped.indexOf('{');
+    const lastBrace = stripped.lastIndexOf('}');
+    if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+      return JSON.parse(stripped); // let it throw if truly invalid
+    }
+    const candidate = stripped.slice(firstBrace, lastBrace + 1);
+    return JSON.parse(candidate);
+  } catch (err) {
+    console.warn('Failed to parse JSON text from model:', text);
+    throw err;
+  }
+};
 
 export default function App({ initialTitle, initialText }: XhsLongImageToolProps) {
   const [title, setTitle] = useState<string>('');
@@ -234,18 +286,28 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
     if (!text && !title) return;
     setIsOptimizing(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `你是一位专业的小红书运营专家。请将以下标题和正文进行排版优化。\n\n当前标题：${title}\n当前正文：\n${text}\n\n规则：\n1. 优化标题，使其更有张力。\n2. 使用 "# 标题" 标记正文中的核心重点句子作为内文大字标题。\n3. 使用 "> 引用" 标记金句、名言或需要强调的内容。\n4. 使用 "==文字==" 标记段落中的关键词语。\n5. 增加适当的 Emoji。\n\n请按如下格式返回：\n[NEW_TITLE] 优化的标题\n[NEW_BODY] 优化的正文内容`,
-      });
-      if (response.text) {
-        const content = response.text;
-        const newTitle = content.match(/\[NEW_TITLE\]\s*(.*)/)?.[1] || title;
-        const newBody = content.match(/\[NEW_BODY\]\s*([\s\S]*)/)?.[1] || text;
-        setTitle(newTitle.trim());
-        setText(newBody.trim());
-      }
+      const content = await callOpenRouterJson(
+        `你是一位专业的小红书运营专家。请将以下标题和正文进行排版优化。
+
+当前标题：${title}
+当前正文：
+${text}
+
+规则：
+1. 优化标题，使其更有张力。
+2. 使用 "# 标题" 标记正文中的核心重点句子作为内文大字标题。
+3. 使用 "> 引用" 标记金句、名言或需要强调的内容。
+4. 使用 "==文字==" 标记段落中的关键词语。
+5. 增加适当的 Emoji。
+
+请按如下格式返回：
+[NEW_TITLE] 优化的标题
+[NEW_BODY] 优化的正文内容`
+      );
+      const newTitle = content.match(/\[NEW_TITLE\]\s*(.*)/)?.[1] || title;
+      const newBody = content.match(/\[NEW_BODY\]\s*([\s\S]*)/)?.[1] || text;
+      setTitle(newTitle.trim());
+      setText(newBody.trim());
     } catch (err) {
       alert("AI 优化失败");
     } finally {
@@ -253,52 +315,118 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
     }
   };
 
+const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRatio) => {
+  const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error('缺少 OpenRouter Key，请在 .env.local 配置 VITE_OPENROUTER_API_KEY');
+
+  const aspect = canvasRatio === CanvasRatio.RATIO_1_1 ? '1:1' : canvasRatio === CanvasRatio.RATIO_9_16 ? '9:16' : '3:4';
+    const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': OPENROUTER_SITE_URL,
+        'X-Title': 'Super Content Factory'
+      },
+      body: JSON.stringify({
+        model: OPENROUTER_IMAGE_MODEL,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: `${prompt}\n\nAspect Ratio: ${aspect}` }
+            ]
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`生成封面失败：${errorText || response.statusText}`);
+    }
+
+  const data: any = await response.json();
+  const parts = data?.choices?.[0]?.message?.content;
+  let imageUrl = '';
+
+  if (Array.isArray(parts)) {
+    const imagePart = parts.find((p: any) => p?.type === 'image_url' && p?.image_url?.url);
+    if (imagePart?.image_url?.url) {
+      imageUrl = imagePart.image_url.url;
+    } else {
+      const textBase64 = parts.map((p: any) => p?.text || '').join('\n');
+      const base64Match = textBase64.match(/data:image\/[a-zA-Z0-9+]+;base64,[A-Za-z0-9+/=]+/);
+      if (base64Match?.[0]) {
+        imageUrl = base64Match[0];
+      } else {
+        const nakedBase64 = textBase64.match(/^[A-Za-z0-9+/=]{100,}$/m);
+        if (nakedBase64?.[0]) imageUrl = `data:image/png;base64,${nakedBase64[0]}`;
+      }
+    }
+  } else if (typeof parts === 'string') {
+    const textBase64 = parts;
+    const base64Match = textBase64.match(/data:image\/[a-zA-Z0-9+]+;base64,[A-Za-z0-9+/=]+/);
+    if (base64Match?.[0]) {
+      imageUrl = base64Match[0];
+    } else {
+      const nakedBase64 = textBase64.match(/^[A-Za-z0-9+/=]{100,}$/m);
+      if (nakedBase64?.[0]) imageUrl = `data:image/png;base64,${nakedBase64[0]}`;
+    }
+  }
+
+  // 更多回退：尝试从 b64_json 或整体字符串中提取
+  if (!imageUrl) {
+    const asString = JSON.stringify(data);
+    const dataUriMatch = asString.match(/data:image\/[a-zA-Z0-9+]+;base64,[A-Za-z0-9+/=]+/);
+    if (dataUriMatch?.[0]) {
+      imageUrl = dataUriMatch[0];
+    } else {
+      const b64JsonMatch = asString.match(/\"b64_json\"\\s*:\\s*\"([^\"]+)\"/);
+      if (b64JsonMatch?.[1]) {
+        imageUrl = `data:image/png;base64,${b64JsonMatch[1]}`;
+      }
+    }
+  }
+
+  if (!imageUrl) {
+    console.warn('OpenRouter image raw response:', data);
+    throw new Error('OpenRouter 返回结果中没有图片数据');
+  }
+  return imageUrl.startsWith('data:') ? imageUrl : `data:image/png;base64,${imageUrl}`;
+};
+
   const generateCover = async () => {
     if (!text && !title) return;
     setIsGeneratingCover(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      
-      const textResponse = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `你是一位顶级视觉创意总监。请深度阅读以下文章，执行以下视觉策划任务：
-        1. 身份提炼：谁在说话？谁在听？（例如：15年经验的公考导师在给焦虑的学员传授秘籍）。
-        2. 场景叙事：构思一个极具“代入感”的、能讲述故事的视觉概念。
-           - 若是导师/教育类：不要只画一张桌子。构思诸如：老旧台灯下密密麻麻的批注笔记特写、讲台上导师充满张力的手势与台下专注的侧影、或者是一张写满公式但充满希望的黑板前的背影。
-           - 若是成就/职场类：构思诸如：拿到录取通知书那一刻颤抖的双手、深夜写字楼里唯一亮着的窗口、或者是职场精英在窗前俯瞰城市的光影交织。
-        3. 提炼摘要：提炼一句非常有共鸣感的精华摘要（不超过 30 个字）。
-        4. 生成绘图提示词：将上述叙事场景转化为专业的 AI 绘图提示词（英文）。要求：极其专业的摄影质感（Cinematic Photography），电影级光影（Chiaroscuro lighting），构图具有深度感。**绝对严禁画面出现任何文字、字母、符号或书籍封面上的假字**。
+      const textResponse = await callOpenRouterJson(
+        `你是一位顶级视觉创意总监。请深度阅读以下文章，并返回严格的 JSON：
+{
+  "abstract": "一句 30 字内摘要",
+  "visualConcept": "核心叙事概念",
+  "keyElements": ["元素1","元素2","元素3"],
+  "visualStyle": "realistic 或 flat-illustration 或 hybrid",
+  "imagePrompt": "英文绘图提示词（含场景/人物/道具/光线描述，偏向人与人互动的构图）"
+}
 
-        文章标题：${title}
-        正文内容：${text.substring(0, 1000)}`,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              abstract: { type: Type.STRING },
-              storyPersona: { type: Type.STRING },
-              visualConcept: { type: Type.STRING },
-              imagePrompt: { type: Type.STRING }
-            },
-            required: ['abstract', 'storyPersona', 'visualConcept', 'imagePrompt']
-          }
-        }
-      });
+要求：
+1. keyElements 需结合正文要素（如公考→考场/教学/答题等），3-6 个。
+2. visualStyle 在写实与平面动画间切换或混合，且仅输出以上三种枚举值。
+3. imagePrompt 要包含要素，强调故事感和光影深度，场景优先为【两到三人互动/交流/辅导/答题】构图，避免空场景，严禁出现文字/LOGO/字母。
 
-      const data = JSON.parse(textResponse.text || '{}');
-      const finalPrompt = `Professional cinematic depth-of-field photography, ${data.imagePrompt}. Mastery of light and shadow, ultra-realistic textures, emotional atmosphere, 8k resolution, NO TEXT, NO LOGO, NO WORDS ON PAPER.`;
-      
-      const imageResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: [{ text: finalPrompt }],
-        config: { imageConfig: { aspectRatio: ratio === CanvasRatio.RATIO_1_1 ? '1:1' : ratio === CanvasRatio.RATIO_9_16 ? '9:16' : '3:4' } }
-      });
+文章标题：${title}
+正文内容：${text.substring(0, 1000)}`
+      );
 
-      let base64Image = '';
-      for (const part of imageResponse.candidates[0].content.parts) {
-        if (part.inlineData) base64Image = `data:image/png;base64,${part.inlineData.data}`;
-      }
+      const data = parseJsonFromText(textResponse || '{}');
+      const elements = Array.isArray(data.keyElements) ? data.keyElements.filter((e: string) => !!e).join(', ') : '';
+      const styleHint = (data.visualStyle || '').toLowerCase();
+      const stylePrompt = styleHint.includes('flat') ? 'Flat illustration with clean shapes and balanced color blocks' : styleHint.includes('hybrid') ? 'Semi-realistic with gentle illustrative accents' : 'Photorealistic with cinematic depth-of-field';
+      const refStyle = 'Clean, bright workplace/classroom/interview composition; balanced framing; calm mood; no horror or gore.';
+      const interactionBias = 'Prefer 2-3 people interacting/teaching/interviewing together rather than empty rooms.';
+      const finalPrompt = `${stylePrompt}. Core elements: ${elements || 'main topic'}. ${data.imagePrompt}. ${refStyle} ${interactionBias} All humans have East Asian (Chinese) facial features. Rich cinematic lighting, emotional atmosphere, high detail, NO TEXT, NO LOGO, NO LETTERS.`;
+      const base64Image = await generateImageViaOpenRouter(finalPrompt, ratio);
 
       setCoverData({
         title: title || '未命名标题',
@@ -306,7 +434,7 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
         imageUrl: base64Image,
         imagePrompt: finalPrompt,
         // 保存上下文用于重绘
-        originalContext: { title, text, previousConcept: data.visualConcept }
+        originalContext: { title, text, previousConcept: data.visualConcept, previousElements: Array.isArray(data.keyElements) ? data.keyElements : [], previousStyle: data.visualStyle }
       } as any);
     } catch (err) {
       console.error(err);
@@ -320,56 +448,42 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
     if (!coverData) return;
     setIsRegeneratingImage(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const context = (coverData as any).originalContext;
       
       // 用户点击重绘说明对上个方案不满意，要求重新思考视觉切入点
-      const textResponse = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `用户不满意之前的视觉创意（之前的创意是：${context?.previousConcept || '未知'}）。
-        请你作为创意总监，跳出之前的框架，为这篇文章提供一个【截然不同】的新叙事场景。
-        例如：如果之前是老师讲课的广角，这次请聚焦到“学生正在划重点的手部特写”或“一张充满故事感的准考证”；
-        如果之前是白天的学习，这次请尝试“深夜雨夜书桌旁的孤寂与专注”。
-        
-        要求：
-        1. 依然要保持与文章高度相关，具有极强的代入感。
-        2. 生成全新的绘图提示词（英文）。
-        3. **严禁出现文字**。
-        
-        文章标题：${context?.title}
-        正文参考：${context?.text?.substring(0, 500)}`,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              visualConcept: { type: Type.STRING },
-              imagePrompt: { type: Type.STRING }
-            },
-            required: ['visualConcept', 'imagePrompt']
-          }
-        }
-      });
+      const textResponse = await callOpenRouterJson(
+        `用户不满意之前的视觉创意（之前的创意是：${context?.previousConcept || '未知'}，之前的要素：${(context?.previousElements || []).join('、') || '无'}）。
+请你作为创意总监，跳出之前的框架，生成一个截然不同的新叙事场景，并返回严格 JSON：
+{
+  "visualConcept": "新的叙事概念",
+  "keyElements": ["元素1","元素2","元素3"],
+  "visualStyle": "realistic 或 flat-illustration 或 hybrid",
+  "imagePrompt": "英文绘图提示词（含场景/人物/道具/光线描述，偏向人与人互动的构图）"
+}
 
-      const data = JSON.parse(textResponse.text || '{}');
-      const finalPrompt = `Professional artistic photography, ${data.imagePrompt}. Dramatic cinematic lighting, emotional narrative feel, high detail, photorealistic, NO TEXT, NO WORDS.`;
+要求：
+1. 依然与文章高度相关，具有代入感。
+2. 避免重复使用上一次要素：${(context?.previousElements || []).join('、') || '无'}。
+3. 3-6 个新要素；风格从枚举里选；提示词包含要素，强调【两到三人互动/交流/辅导/答题】的构图，避免空场景，严禁出现文字/LOGO/字母。
 
-      const imageResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: [{ text: finalPrompt }],
-        config: { imageConfig: { aspectRatio: ratio === CanvasRatio.RATIO_1_1 ? '1:1' : ratio === CanvasRatio.RATIO_9_16 ? '9:16' : '3:4' } }
-      });
+文章标题：${context?.title}
+正文参考：${context?.text?.substring(0, 500)}`
+      );
 
-      let base64Image = '';
-      for (const part of imageResponse.candidates[0].content.parts) {
-        if (part.inlineData) base64Image = `data:image/png;base64,${part.inlineData.data}`;
-      }
+      const data = parseJsonFromText(textResponse || '{}');
+      const elements = Array.isArray(data.keyElements) ? data.keyElements.filter((e: string) => !!e).join(', ') : '';
+      const styleHint = (data.visualStyle || '').toLowerCase();
+      const stylePrompt = styleHint.includes('flat') ? 'Flat illustration with clean shapes and balanced color blocks' : styleHint.includes('hybrid') ? 'Semi-realistic with gentle illustrative accents' : 'Photorealistic with cinematic depth-of-field';
+      const refStyle = 'Clean, bright workplace/classroom/interview composition; balanced framing; calm mood; no horror or gore.';
+      const interactionBias = 'Prefer 2-3 people interacting/teaching/interviewing together rather than empty rooms.';
+      const finalPrompt = `${stylePrompt}. Core elements: ${elements || 'main topic'} (avoid previous scene elements). ${data.imagePrompt}. ${refStyle} ${interactionBias} All humans have East Asian (Chinese) facial features. Dramatic cinematic lighting, emotional narrative feel, high detail, NO TEXT, NO LOGO, NO LETTERS.`;
+      const base64Image = await generateImageViaOpenRouter(finalPrompt, ratio);
 
       setCoverData({ 
         ...coverData, 
         imageUrl: base64Image, 
         imagePrompt: finalPrompt,
-        originalContext: { ...context, previousConcept: data.visualConcept }
+        originalContext: { ...context, previousConcept: data.visualConcept, previousElements: Array.isArray(data.keyElements) ? data.keyElements : [], previousStyle: data.visualStyle }
       } as any);
     } catch (err) {
       console.error(err);
@@ -379,7 +493,7 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
     }
   };
 
-  const renderAllPagesToImages = useCallback(async () => {
+  const renderAllPagesToImages = useCallback(async (pixelRatio: number = 2) => {
     if (pages.length === 0 && !title) return [];
     const hasCover = title || coverData;
     const rendered: { fileName: string; dataUrl: string }[] = [];
@@ -388,7 +502,7 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
       const coverEl = document.getElementById('page-cover');
       if (coverEl) {
         const dataUrl = await toPng(coverEl, { 
-          pixelRatio: 2,
+          pixelRatio,
           backgroundColor: currentTheme.bg,
           style: { transform: 'scale(1)', margin: '0', padding: '0' }
         });
@@ -400,7 +514,7 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
       const element = document.getElementById(`page-${i}`);
       if (element) {
         const dataUrl = await toPng(element, { 
-          pixelRatio: 2,
+          pixelRatio,
           backgroundColor: currentTheme.bg,
           style: { transform: 'scale(1)', margin: '0', padding: '0' }
         });
@@ -444,7 +558,8 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
     const handleSave = async (evt: Event) => {
       const event = evt as CustomEvent<{ onSave?: (payload: { title?: string; text?: string; images: string[]; coverImage?: string }) => void; onError?: (msg?: string) => void }>;
       try {
-        const renderedImages = await renderAllPagesToImages();
+        // 使用默认高清渲染，保证保存的图片清晰度（与导出一致）
+        const renderedImages = await renderAllPagesToImages(2);
         if (renderedImages.length === 0) {
           event.detail?.onError?.('暂无可保存的图片');
           return;

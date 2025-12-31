@@ -8,6 +8,15 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        proxy: {
+          // 解决开发环境下调用微信开放接口的 CORS 问题
+          '/wechat-openapi': {
+            target: 'https://wx.limyai.com/api/openapi',
+            changeOrigin: true,
+            secure: false,
+            rewrite: (path) => path.replace(/^\/wechat-openapi/, ''),
+          },
+        },
       },
       plugins: [react()],
       define: {
