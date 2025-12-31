@@ -62,6 +62,51 @@ const QUILL_FORMATS = [
   'link', 'image'
 ];
 
+const PROJECT_ICON_REGISTRY = {
+  sun: SunIcon,
+  cloud: CloudIcon,
+  tree: TreeIcon,
+  heart: HeartIcon,
+  zap: ZapIcon,
+  umbrella: UmbrellaIcon,
+  message: MessageSquareIcon,
+  database: DatabaseIcon,
+  brain: BrainIcon,
+  sparkles: SparklesIcon,
+  layout: LayoutIcon,
+  filetext: FileTextIcon,
+  globe: GlobeIcon,
+  pen: PenToolIcon,
+  mic: MicIcon,
+  image: ImageIcon,
+  play: PlayCircleIcon,
+  folder: FolderIcon,
+  home: HomeIcon,
+  settings: SettingsIcon,
+  link: LinkIcon,
+  grid: GridIcon,
+  device: DeviceIcon,
+  save: SaveIcon,
+  share: ShareIcon,
+  lock: LockIcon,
+  music: MusicIcon,
+  map: MapPinIcon,
+  calendar: CalendarIcon,
+  briefcase: BriefcaseIcon,
+  smile: SmileIcon,
+  gift: GiftIcon,
+  flag: FlagIcon,
+  bookmark: BookmarkIcon,
+} as const;
+
+type ProjectIconKey = keyof typeof PROJECT_ICON_REGISTRY;
+
+const renderProjectIcon = (iconKey?: ProjectIconKey, color?: string) => {
+  const Icon = (iconKey && PROJECT_ICON_REGISTRY[iconKey]) || MessageSquareIcon;
+  const colorClass = color || '';
+  return <Icon className={`w-5 h-5 ${colorClass}`} />;
+};
+
 // --- SHARED TYPES & MOCK DATA (For Editor) ---
 
 type SourceType = 'Web' | 'PDF' | 'Note' | 'Video' | 'Image' | 'xiaohongshu' | 'link' | 'folder' | 'text' | 'image' | 'video' | 'pdf' | 'article';
@@ -496,6 +541,9 @@ type ShortcutCommand = {
 };
 
 const SHORTCUT_STORAGE_KEY = 'scf-shortcuts-v1';
+const PROJECT_STORAGE_KEY = 'scf-projects-v1';
+const WORKS_STORAGE_KEY = 'scf-works-v1';
+const CHAT_HISTORY_KEY_PREFIX = 'scf-chat-history-v1-';
 
 const DEFAULT_SHORTCUT_COMMANDS: ShortcutCommand[] = [
   { id: 'cmd1', name: 'Summarize', icon: 'text', prompt: 'Please summarize the following content concisely:', agentMode: 'ask', modelId: 'gpt-4o' },
@@ -542,8 +590,12 @@ interface Project {
   itemCount: number;
   lastUpdated: string;
   icon: React.ReactNode;
+  iconKey?: ProjectIconKey;
+  iconColor?: string;
   items: ProjectItem[];
 }
+
+type StoredProject = Omit<Project, 'icon'>;
 
 // Initial Data
 const INITIAL_PROJECTS: Project[] = [
@@ -552,7 +604,9 @@ const INITIAL_PROJECTS: Project[] = [
     name: 'test',
     itemCount: 4,
     lastUpdated: '16 hours ago',
-    icon: <MessageSquareIcon className="w-5 h-5" />,
+    iconKey: 'message',
+    iconColor: 'text-gray-900',
+    icon: renderProjectIcon('message', 'text-gray-900'),
     items: [
       {
         id: 'i1',
@@ -587,7 +641,9 @@ const INITIAL_PROJECTS: Project[] = [
     name: 'Chaos',
     itemCount: 16,
     lastUpdated: '16 hours ago',
-    icon: <DatabaseIcon className="w-5 h-5" />,
+    iconKey: 'database',
+    iconColor: 'text-gray-900',
+    icon: renderProjectIcon('database', 'text-gray-900'),
     items: [
       {
         id: 'c1',
@@ -631,6 +687,43 @@ const INITIAL_PROJECTS: Project[] = [
     ]
   }
 ];
+
+const safeParseJSON = <T,>(value: string | null): T | null => {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as T;
+  } catch (err) {
+    console.warn('Failed to parse JSON from storage', err);
+    return null;
+  }
+};
+
+const stripFileFromItem = (item: ProjectItem) => {
+  const { file, ...rest } = item;
+  return rest;
+};
+
+const hydrateProjects = (projects: StoredProject[]): Project[] => {
+  return projects.map(p => ({
+    ...p,
+    iconKey: p.iconKey || 'message',
+    iconColor: p.iconColor || 'text-gray-900',
+    icon: renderProjectIcon((p.iconKey as ProjectIconKey) || 'message', p.iconColor || 'text-gray-900'),
+    items: (p.items || []).map(stripFileFromItem)
+  }));
+};
+
+const serializeProjectsForStorage = (projects: Project[]): StoredProject[] => {
+  return projects.map(p => {
+    const { icon, items, ...rest } = p;
+    return {
+      ...rest,
+      iconKey: p.iconKey || 'message',
+      iconColor: p.iconColor || 'text-gray-900',
+      items: (items || []).map(stripFileFromItem)
+    };
+  });
+};
 
 // --- MODEL DATA ---
 interface ModelOption {
@@ -1034,33 +1127,28 @@ const BG_COLORS_MAP: Record<string, string> = {
   'text-amber-700': 'bg-amber-700',
 };
 
-const PICKER_ICONS = [
-  SunIcon, CloudIcon, TreeIcon, HeartIcon, ZapIcon, UmbrellaIcon,
-  MessageSquareIcon, DatabaseIcon, BrainIcon, SparklesIcon, LayoutIcon, 
-  FileTextIcon, GlobeIcon, PenToolIcon, MicIcon, ImageIcon, 
-  PlayCircleIcon, FolderIcon, HomeIcon, SettingsIcon, LinkIcon, GridIcon,
-  DeviceIcon, SaveIcon, ShareIcon, LockIcon, MusicIcon, MapPinIcon,
-  CalendarIcon, BriefcaseIcon, SmileIcon, GiftIcon, FlagIcon, BookmarkIcon
-];
+const PICKER_ICONS: { key: ProjectIconKey; Icon: React.ComponentType<{ className?: string }> }[] =
+  Object.entries(PROJECT_ICON_REGISTRY).map(([key, Icon]) => ({ key: key as ProjectIconKey, Icon }));
 
 
 const CreateProjectModal: React.FC<{ 
   isOpen: boolean; 
   onClose: () => void; 
-  onCreate: (name: string, icon: React.ReactNode) => void;
+  onCreate: (name: string, iconKey: ProjectIconKey, iconColor: string) => void;
 }> = ({ isOpen, onClose, onCreate }) => {
   const [name, setName] = useState('');
   const [selectedColor, setSelectedColor] = useState(PROJECT_COLORS[0]);
-  const [SelectedIcon, setSelectedIcon] = useState(() => PICKER_ICONS[0]);
+  const [selectedIconKey, setSelectedIconKey] = useState<ProjectIconKey>(PICKER_ICONS[0].key);
   const [showPicker, setShowPicker] = useState(false);
   const pickerContainerRef = useRef<HTMLDivElement>(null);
+  const SelectedIcon = PROJECT_ICON_REGISTRY[selectedIconKey];
 
   // Reset state when opening
   useEffect(() => {
     if (isOpen) {
       setName('');
       setSelectedColor(PROJECT_COLORS[0]);
-      setSelectedIcon(() => PICKER_ICONS[0]);
+      setSelectedIconKey(PICKER_ICONS[0].key);
       setShowPicker(false);
     }
   }, [isOpen]);
@@ -1132,11 +1220,11 @@ const CreateProjectModal: React.FC<{
                         <div className="h-px bg-gray-100 mb-4"></div>
                          {/* Icons Grid */}
                         <div className="grid grid-cols-6 gap-2 max-h-[240px] overflow-y-auto custom-scrollbar p-1">
-                            {PICKER_ICONS.map((Icon, idx) => (
+                            {PICKER_ICONS.map(({ key, Icon }) => (
                               <button 
-                                key={idx}
-                                onClick={() => setSelectedIcon(() => Icon)}
-                                className={`p-2 rounded-lg hover:bg-gray-100 flex items-center justify-center transition-colors ${SelectedIcon === Icon ? 'bg-gray-100 text-gray-900' : 'text-gray-500'}`}
+                                key={key}
+                                onClick={() => setSelectedIconKey(key)}
+                                className={`p-2 rounded-lg hover:bg-gray-100 flex items-center justify-center transition-colors ${selectedIconKey === key ? 'bg-gray-100 text-gray-900' : 'text-gray-500'}`}
                               >
                                 <Icon className="w-5 h-5" />
                               </button>
@@ -1161,7 +1249,7 @@ const CreateProjectModal: React.FC<{
              {/* Submit */}
              <Button
                 disabled={!name.trim()}
-                onClick={() => onCreate(name, <SelectedIcon className={`w-5 h-5 ${selectedColor}`} />)}
+                onClick={() => onCreate(name, selectedIconKey, selectedColor)}
                 className="w-full rounded-full py-4 text-base font-semibold bg-gray-900 text-white hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed shadow-xl shadow-gray-200 transition-all hover:-translate-y-0.5"
              >
                 Create Project
@@ -2531,6 +2619,25 @@ const ProjectDetailView: React.FC<{
   const [chatError, setChatError] = useState<string | null>(null);
   const [copiedReplyIndex, setCopiedReplyIndex] = useState<number | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = safeParseJSON<any[]>(window.localStorage.getItem(`${CHAT_HISTORY_KEY_PREFIX}${project.id}`));
+    if (stored) {
+      setChatHistory(stored);
+    } else {
+      setChatHistory([]);
+    }
+  }, [project.id]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(`${CHAT_HISTORY_KEY_PREFIX}${project.id}`, JSON.stringify(chatHistory));
+    } catch (err) {
+      console.warn('Failed to persist chat history', err);
+    }
+  }, [project.id, chatHistory]);
 
   // New Note / Edit Mode State
   const [isEditing, setIsEditing] = useState(false);
@@ -4622,18 +4729,28 @@ const ProjectDetailView: React.FC<{
 };
 
 export const WorkspacePage: React.FC = () => {
-  const [projects, setProjects] = useState<Project[]>(INITIAL_PROJECTS);
+  const [projects, setProjects] = useState<Project[]>(() => {
+    if (typeof window === 'undefined') return INITIAL_PROJECTS;
+    const stored = safeParseJSON<StoredProject[]>(window.localStorage.getItem(PROJECT_STORAGE_KEY));
+    return stored && Array.isArray(stored) ? hydrateProjects(stored) : INITIAL_PROJECTS;
+  });
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [works, setWorks] = useState<Work[]>(MOCK_WORKS);
+  const [works, setWorks] = useState<Work[]>(() => {
+    if (typeof window === 'undefined') return MOCK_WORKS;
+    const stored = safeParseJSON<Work[]>(window.localStorage.getItem(WORKS_STORAGE_KEY));
+    return stored && Array.isArray(stored) ? stored : MOCK_WORKS;
+  });
 
-  const handleCreateProject = (name: string, icon: React.ReactNode) => {
+  const handleCreateProject = (name: string, iconKey: ProjectIconKey, iconColor: string) => {
     const newProject: Project = {
       id: `proj-${Date.now()}`,
       name,
       itemCount: 0,
       lastUpdated: 'Just now',
-      icon,
+      iconKey,
+      iconColor,
+      icon: renderProjectIcon(iconKey, iconColor),
       items: []
     };
     setProjects([newProject, ...projects]);
@@ -4645,6 +4762,25 @@ export const WorkspacePage: React.FC = () => {
      setProjects(projects.map(p => p.id === updated.id ? updated : p));
      setCurrentProject(updated);
   };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const payload = serializeProjectsForStorage(projects);
+      window.localStorage.setItem(PROJECT_STORAGE_KEY, JSON.stringify(payload));
+    } catch (err) {
+      console.warn('Failed to persist projects', err);
+    }
+  }, [projects]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(WORKS_STORAGE_KEY, JSON.stringify(works));
+    } catch (err) {
+      console.warn('Failed to persist works', err);
+    }
+  }, [works]);
 
   if (currentProject) {
     return (
