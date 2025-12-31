@@ -484,14 +484,39 @@ const CHAT_HISTORY = [
 ];
 
 // --- SHORTCUT COMMANDS ---
-const SHORTCUT_COMMANDS = [
-  { id: 'cmd1', label: 'Summarize', icon: <FileTextIcon className="w-3 h-3 text-blue-500"/>, prompt: 'Please summarize the following content concisely:' },
-  { id: 'cmd2', label: 'Key Takeaways', icon: <SparklesIcon className="w-3 h-3 text-yellow-500"/>, prompt: 'Extract the key takeaways and insights from this:' },
-  { id: 'cmd3', label: 'Explain Simple', icon: <SmileIcon className="w-3 h-3 text-green-500"/>, prompt: 'Explain the concepts here in simple terms:' },
-  { id: 'cmd4', label: 'Translate to CN', icon: <GlobeIcon className="w-3 h-3 text-purple-500"/>, prompt: 'Translate the following content into professional Chinese:' },
-  { id: 'cmd5', label: 'Draft Email', icon: <MessageSquareIcon className="w-3 h-3 text-gray-500"/>, prompt: 'Draft a professional email based on this information:' },
-  { id: 'cmd6', label: 'Action Items', icon: <CheckSquareIcon className="w-3 h-3 text-teal-500"/>, prompt: 'Create a checklist of actionable items from this:' },
+type ShortcutCommand = {
+  id: string;
+  name: string;
+  prompt: string;
+  description?: string;
+  agentMode?: 'agent' | 'ask' | 'write' | 'search' | 'image';
+  modelId?: string;
+  imageModelId?: string;
+  icon?: 'text' | 'sparkles' | 'smile' | 'globe' | 'mail' | 'check' | 'idea';
+};
+
+const SHORTCUT_STORAGE_KEY = 'scf-shortcuts-v1';
+
+const DEFAULT_SHORTCUT_COMMANDS: ShortcutCommand[] = [
+  { id: 'cmd1', name: 'Summarize', icon: 'text', prompt: 'Please summarize the following content concisely:', agentMode: 'ask', modelId: 'gpt-4o' },
+  { id: 'cmd2', name: 'Key Takeaways', icon: 'sparkles', prompt: 'Extract the key takeaways and insights from this:', agentMode: 'ask', modelId: 'gpt-4o' },
+  { id: 'cmd3', name: 'Explain Simple', icon: 'smile', prompt: 'Explain the concepts here in simple terms:', agentMode: 'ask', modelId: 'gpt-4o' },
+  { id: 'cmd4', name: 'Translate to CN', icon: 'globe', prompt: 'Translate the following content into professional Chinese:', agentMode: 'ask', modelId: 'gemini-2.5-flash' },
+  { id: 'cmd5', name: 'Draft Email', icon: 'mail', prompt: 'Draft a professional email based on this information:', agentMode: 'write', modelId: 'gpt-4o' },
+  { id: 'cmd6', name: 'Action Items', icon: 'check', prompt: 'Create a checklist of actionable items from this:', agentMode: 'write', modelId: 'gpt-4o' },
 ];
+
+const renderShortcutIcon = (icon?: ShortcutCommand['icon']) => {
+  switch (icon) {
+    case 'text': return <FileTextIcon className="w-3 h-3 text-blue-500" />;
+    case 'sparkles': return <SparklesIcon className="w-3 h-3 text-yellow-500" />;
+    case 'smile': return <SmileIcon className="w-3 h-3 text-green-500" />;
+    case 'globe': return <GlobeIcon className="w-3 h-3 text-purple-500" />;
+    case 'mail': return <MessageSquareIcon className="w-3 h-3 text-gray-500" />;
+    case 'check': return <CheckSquareIcon className="w-3 h-3 text-teal-500" />;
+    default: return <SparklesIcon className="w-3 h-3 text-amber-500" />;
+  }
+};
 
 // --- DASHBOARD TYPES & DATA ---
 
@@ -2577,6 +2602,15 @@ const ProjectDetailView: React.FC<{
   // Shortcut Menu State
   const [showShortcutMenu, setShowShortcutMenu] = useState(false);
   const shortcutMenuRef = useRef<HTMLDivElement>(null);
+  const shortcutAgentMenuRef = useRef<HTMLDivElement>(null);
+  const shortcutModelSelectorRef = useRef<HTMLDivElement>(null);
+  const shortcutImageStyleSelectorRef = useRef<HTMLDivElement>(null);
+  const [shortcuts, setShortcuts] = useState<ShortcutCommand[]>(DEFAULT_SHORTCUT_COMMANDS);
+  const [activeShortcutId, setActiveShortcutId] = useState<string | null>(DEFAULT_SHORTCUT_COMMANDS[0]?.id || null);
+  const [showShortcutOverlay, setShowShortcutOverlay] = useState(false);
+  const [showShortcutAgentMenu, setShowShortcutAgentMenu] = useState(false);
+  const [showShortcutModelSelector, setShowShortcutModelSelector] = useState(false);
+  const [showShortcutImageStyleSelector, setShowShortcutImageStyleSelector] = useState(false);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -2654,6 +2688,25 @@ const ProjectDetailView: React.FC<{
     };
   }, []);
 
+  // Close shortcut overlay dropdowns on outside click
+  useEffect(() => {
+    if (!showShortcutOverlay) return;
+    const handleOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (showShortcutAgentMenu && shortcutAgentMenuRef.current && !shortcutAgentMenuRef.current.contains(target)) {
+        setShowShortcutAgentMenu(false);
+      }
+      if (showShortcutModelSelector && shortcutModelSelectorRef.current && !shortcutModelSelectorRef.current.contains(target)) {
+        setShowShortcutModelSelector(false);
+      }
+      if (showShortcutImageStyleSelector && shortcutImageStyleSelectorRef.current && !shortcutImageStyleSelectorRef.current.contains(target)) {
+        setShowShortcutImageStyleSelector(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [showShortcutOverlay, showShortcutAgentMenu, showShortcutModelSelector, showShortcutImageStyleSelector]);
+
   // Reset left list mode when re-entering works tab
   useEffect(() => {
     if (activeTab === 'works') {
@@ -2691,6 +2744,32 @@ const ProjectDetailView: React.FC<{
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [isFilterOpen]);
+
+  // Load & persist shortcuts
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = window.localStorage.getItem(SHORTCUT_STORAGE_KEY);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored) as ShortcutCommand[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setShortcuts(parsed);
+          setActiveShortcutId(parsed[0]?.id || null);
+        }
+      } catch (err) {
+        console.warn('Failed to parse shortcuts from storage', err);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(SHORTCUT_STORAGE_KEY, JSON.stringify(shortcuts));
+    } catch (err) {
+      console.warn('Failed to persist shortcuts', err);
+    }
+  }, [shortcuts]);
 
   // Sync edit content when selected material changes
   useEffect(() => {
@@ -2870,8 +2949,11 @@ const ProjectDetailView: React.FC<{
     return `附件列表（请作为上下文使用）：\n${JSON.stringify(attachments, null, 2)}`;
   };
 
-  const handleSendMessage = async (messageOverride?: string) => {
-    if (selectedAgentMode === 'image') {
+  const handleSendMessage = async (messageOverride?: string, options?: { agentMode?: 'agent' | 'ask' | 'write' | 'search' | 'image'; modelId?: string; imageModelId?: string }) => {
+    const agentMode = options?.agentMode ?? selectedAgentMode;
+    const modelOverride = options?.modelId;
+
+    if (agentMode === 'image') {
       setChatError('图片模型无法用于文本对话，请选择 Ask/Write 模式');
       return;
     }
@@ -2895,7 +2977,17 @@ const ProjectDetailView: React.FC<{
       }
       payloadHistory.push(userMsg);
 
-      const modelId = selectedModel || OPENROUTER_FALLBACK_MODEL;
+      if (options?.agentMode && options.agentMode !== selectedAgentMode) {
+        setSelectedAgentMode(options.agentMode);
+      }
+      if (options?.imageModelId && options?.agentMode === 'image') {
+        setSelectedImageModel(options.imageModelId);
+      }
+      if (modelOverride && options?.agentMode !== 'image') {
+        setSelectedModel(modelOverride);
+      }
+
+      const modelId = modelOverride || selectedModel || OPENROUTER_FALLBACK_MODEL;
       const reply = await callOpenRouterChat(payloadHistory, modelId);
       setChatHistory(prev => [...prev, { role: 'assistant', content: reply }]);
       addWorkFromContent(reply);
@@ -2908,7 +3000,14 @@ const ProjectDetailView: React.FC<{
     }
   };
 
-  const handleShortcut = (cmd: typeof SHORTCUT_COMMANDS[0]) => {
+  const handleShortcut = (cmd: ShortcutCommand) => {
+    const agentMode = cmd.agentMode || selectedAgentMode;
+    const modelId = agentMode === 'image' ? (cmd.imageModelId || selectedImageModel) : (cmd.modelId || selectedModel);
+
+    if (cmd.agentMode) setSelectedAgentMode(cmd.agentMode);
+    if (agentMode === 'image' && cmd.imageModelId) setSelectedImageModel(cmd.imageModelId);
+    if (agentMode !== 'image' && cmd.modelId) setSelectedModel(cmd.modelId);
+
     let content = cmd.prompt;
     if (chatReferences.length > 0) {
         const refTitles = chatReferences.map(r => {
@@ -2919,7 +3018,35 @@ const ProjectDetailView: React.FC<{
         content += `\n\n(References: ${refTitles})`;
     }
 
-    handleSendMessage(content);
+    handleSendMessage(content, { agentMode, modelId: modelId || undefined, imageModelId: cmd.imageModelId });
+  };
+
+  const addShortcutCommand = () => {
+    const newShortcut: ShortcutCommand = {
+      id: `sc-${Date.now()}`,
+      name: '新建快捷指令',
+      prompt: '',
+      icon: 'sparkles',
+      agentMode: selectedAgentMode,
+      modelId: selectedModel,
+      imageModelId: selectedImageModel
+    };
+    setShortcuts(prev => [newShortcut, ...prev]);
+    setActiveShortcutId(newShortcut.id);
+  };
+
+  const updateShortcutCommand = (id: string, updates: Partial<ShortcutCommand>) => {
+    setShortcuts(prev => prev.map(sc => sc.id === id ? { ...sc, ...updates } : sc));
+  };
+
+  const deleteShortcutCommand = (id: string) => {
+    setShortcuts(prev => {
+      const next = prev.filter(sc => sc.id !== id);
+      if (activeShortcutId === id) {
+        setActiveShortcutId(next[0]?.id || null);
+      }
+      return next;
+    });
   };
 
   const handleCopyResponse = (content: string, index: number) => {
@@ -3229,9 +3356,206 @@ const ProjectDetailView: React.FC<{
     : MODEL_OPTIONS.find(m => m.id === selectedModel);
 
   const modelOptionsToUse = selectedAgentMode === 'image' ? IMAGE_MODEL_OPTIONS : MODEL_OPTIONS;
+  const activeShortcut = shortcuts.find(sc => sc.id === activeShortcutId) || shortcuts[0] || null;
+  const draftAgentMode = activeShortcut?.agentMode || selectedAgentMode;
+  const draftModelId = draftAgentMode === 'image' ? (activeShortcut?.imageModelId || selectedImageModel) : (activeShortcut?.modelId || selectedModel);
+  const shortcutModelOptionsToUse = draftAgentMode === 'image' ? IMAGE_MODEL_OPTIONS : MODEL_OPTIONS;
 
   return (
     <div className="fixed inset-0 z-[100] bg-white flex flex-col font-sans">
+      {showShortcutOverlay && (
+        <div className="fixed inset-0 z-[300] bg-black/30 backdrop-blur-sm flex">
+          <div className="relative flex-1 bg-[#f6f6f8] overflow-hidden">
+             <button 
+               onClick={() => setShowShortcutOverlay(false)}
+               className="absolute top-4 right-4 w-9 h-9 rounded-full bg-white border border-gray-200 shadow-sm flex items-center justify-center text-gray-500 hover:text-gray-900 hover:border-gray-300"
+             >
+               <XIcon className="w-4 h-4" />
+             </button>
+
+             <div className="h-full flex gap-6 px-8 py-6 overflow-hidden">
+               <div className="w-72 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col">
+                 <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+                   <div className="text-sm font-semibold text-gray-900">快捷指令</div>
+                 </div>
+                 <div className="px-4 py-3">
+                   <button 
+                     onClick={addShortcutCommand}
+                     className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-full bg-gray-900 text-white text-sm font-medium hover:bg-gray-800 transition-colors"
+                   >
+                     <PlusIcon className="w-4 h-4" /> 新建快捷指令
+                   </button>
+                 </div>
+                 <div className="flex-1 overflow-y-auto px-2 pb-3 custom-scrollbar">
+                   {shortcuts.map(sc => {
+                     const isActive = sc.id === activeShortcutId;
+                     return (
+                      <button
+                        key={sc.id}
+                        onClick={() => setActiveShortcutId(sc.id)}
+                        className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all flex items-center gap-2 mb-2 ${isActive ? 'bg-gray-100 border-gray-200 shadow-sm' : 'bg-white border-transparent hover:bg-gray-50'}`}
+                      >
+                        <span className="flex-shrink-0 w-6 h-6 rounded-lg bg-gray-50 flex items-center justify-center">
+                          {renderShortcutIcon(sc.icon)}
+                        </span>
+                        <span className="truncate text-sm font-medium text-gray-900">{sc.name || '未命名指令'}</span>
+                      </button>
+                     );
+                   })}
+                 </div>
+               </div>
+
+               <div className="flex-1 bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden flex flex-col">
+                  <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center">
+                        {renderShortcutIcon(activeShortcut?.icon)}
+                      </div>
+                      <h3 className="text-lg font-bold text-gray-900">{activeShortcut?.name || '新建快捷指令'}</h3>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button className="p-2 rounded-full hover:bg-gray-100 text-gray-500" title="分享"><ShareIcon className="w-4 h-4" /></button>
+                      {activeShortcut && (
+                        <button className="p-2 rounded-full hover:bg-red-50 text-red-500" title="删除" onClick={() => deleteShortcutCommand(activeShortcut.id)}>
+                          <TrashIcon className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {activeShortcut ? (
+                    <div className="flex-1 overflow-y-auto p-6 space-y-5 custom-scrollbar">
+                      <div className="space-y-2">
+                        <label className="text-xs font-semibold text-gray-600">名称</label>
+                        <input 
+                          value={activeShortcut.name}
+                          onChange={(e) => updateShortcutCommand(activeShortcut.id, { name: e.target.value })}
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-gray-900 focus:outline-none"
+                          placeholder="输入快捷指令名称"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-xs font-semibold text-gray-600">指令</label>
+                        <div className="border border-gray-200 rounded-xl bg-gray-50">
+                          <textarea 
+                            value={activeShortcut.prompt}
+                            onChange={(e) => updateShortcutCommand(activeShortcut.id, { prompt: e.target.value })}
+                            className="w-full bg-transparent border-none outline-none px-3 py-3 text-sm min-h-[160px] resize-none"
+                            placeholder="Ask anything"
+                          />
+                          <div className="flex items-center justify-between px-3 pb-3">
+                             <div className="flex items-center gap-2">
+                               <button className="w-8 h-8 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center">
+                                 <PlusIcon className="w-4 h-4" />
+                               </button>
+                               <button className="w-8 h-8 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center">
+                                 <PaperclipIcon className="w-4 h-4" />
+                               </button>
+                             </div>
+                             <div className="flex items-center gap-2 text-xs text-gray-600">
+                               <div className="relative" ref={shortcutAgentMenuRef}>
+                                 <button 
+                                    onClick={() => setShowShortcutAgentMenu(!showShortcutAgentMenu)}
+                                    className="px-2 py-1 rounded-lg bg-white border border-gray-200 flex items-center gap-1 hover:border-gray-300"
+                                 >
+                                    <span className="text-gray-700">{draftAgentMode === 'write' ? 'Write' : draftAgentMode === 'image' ? 'Image' : draftAgentMode === 'search' ? 'Search' : 'Ask'}</span>
+                                    <ChevronDownIcon className="w-3 h-3 text-gray-500" />
+                                 </button>
+                                 {showShortcutAgentMenu && (
+                                   <div className="absolute bottom-full left-0 mb-2 w-44 bg-white border border-gray-100 rounded-xl shadow-xl z-50 py-1 animate-in fade-in zoom-in-95 origin-bottom-left">
+                                     {['ask','write','search','image'].map(mode => (
+                                       <button
+                                         key={mode}
+                                         onClick={() => { updateShortcutCommand(activeShortcut.id, { agentMode: mode as any }); setShowShortcutAgentMenu(false); }}
+                                         className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center justify-between"
+                                       >
+                                         <span className="capitalize">{mode}</span>
+                                         {draftAgentMode === mode && <CheckIcon className="w-4 h-4 text-gray-900" />}
+                                       </button>
+                                     ))}
+                                   </div>
+                                 )}
+                               </div>
+
+                               <div className="relative" ref={shortcutModelSelectorRef}>
+                                 <button 
+                                   onClick={() => setShowShortcutModelSelector(!showShortcutModelSelector)}
+                                   className="px-2 py-1 rounded-lg bg-white border border-gray-200 flex items-center gap-1 hover:border-gray-300"
+                                 >
+                                   {getModelIcon(shortcutModelOptionsToUse.find(m => m.id === draftModelId)?.provider || 'openai')}
+                                   <span className="text-gray-700 truncate w-28 text-left">{shortcutModelOptionsToUse.find(m => m.id === draftModelId)?.name || '选择模型'}</span>
+                                   <ChevronDownIcon className="w-3 h-3 text-gray-500" />
+                                 </button>
+                                 {showShortcutModelSelector && (
+                                   <div className="absolute bottom-full left-0 mb-2 w-64 bg-white border border-gray-100 rounded-xl shadow-xl z-50 py-1 animate-in fade-in zoom-in-95 origin-bottom-left max-h-[320px] overflow-y-auto custom-scrollbar">
+                                      {shortcutModelOptionsToUse.map(model => {
+                                        const isSelected = draftModelId === model.id;
+                                        return (
+                                          <button
+                                            key={model.id}
+                                            onClick={() => {
+                                               if (draftAgentMode === 'image') {
+                                                 updateShortcutCommand(activeShortcut.id, { imageModelId: model.id });
+                                               } else {
+                                                 updateShortcutCommand(activeShortcut.id, { modelId: model.id });
+                                               }
+                                               setShowShortcutModelSelector(false);
+                                            }}
+                                            className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 relative"
+                                          >
+                                            {getModelIcon(model.provider)}
+                                            <span className="truncate">{model.name}</span>
+                                            {isSelected && <CheckIcon className="w-4 h-4 text-gray-900 absolute right-3" />}
+                                          </button>
+                                        );
+                                      })}
+                                   </div>
+                                 )}
+                               </div>
+
+                               {draftAgentMode === 'image' && (
+                                 <div className="relative" ref={shortcutImageStyleSelectorRef}>
+                                   <button
+                                     onClick={() => setShowShortcutImageStyleSelector(!showShortcutImageStyleSelector)}
+                                     className="px-2 py-1 rounded-lg bg-white border border-gray-200 flex items-center gap-1 hover:border-gray-300"
+                                   >
+                                     <LayoutIcon className="w-4 h-4" />
+                                     <span className="text-gray-700">风格</span>
+                                     <ChevronDownIcon className="w-3 h-3 text-gray-500" />
+                                   </button>
+                                   {showShortcutImageStyleSelector && (
+                                     <div className="absolute bottom-full right-0 mb-2 w-48 bg-white border border-gray-100 rounded-xl shadow-xl z-50 py-2 px-2">
+                                       <div className="text-xs text-gray-500 px-2 mb-2">风格占位（使用主界面的图片配置）</div>
+                                     </div>
+                                   )}
+                                 </div>
+                               )}
+                             </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold text-gray-600">描述</label>
+                          <span className="text-[11px] text-gray-400">{(activeShortcut.description || '').length}/300</span>
+                        </div>
+                        <textarea 
+                          value={activeShortcut.description || ''}
+                          onChange={(e) => updateShortcutCommand(activeShortcut.id, { description: e.target.value.slice(0, 300) })}
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-gray-900 focus:outline-none min-h-[100px]"
+                          placeholder="补充说明，便于区分和分享"
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex-1 flex items-center justify-center text-sm text-gray-400">暂无快捷指令</div>
+                  )}
+               </div>
+             </div>
+          </div>
+        </div>
+      )}
       
       {/* 1. TOP HEADER (White, fixed) */}
       <header className="h-14 bg-white border-b border-gray-100 flex items-center justify-between px-4 flex-shrink-0 z-20 relative shadow-sm">
@@ -3943,14 +4267,14 @@ const ProjectDetailView: React.FC<{
                 <div className="p-4 bg-white border-t border-gray-200">
                     <div className="flex items-center justify-between mb-1 px-1">
                       <div className="flex items-center gap-2">
-                          {SHORTCUT_COMMANDS.slice(0, 2).map(sc => (
+                          {shortcuts.slice(0, 2).map(sc => (
                               <button 
                                   key={sc.id}
                                   onClick={() => handleShortcut(sc)}
                                   className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-xs font-medium text-gray-700 whitespace-nowrap hover:bg-gray-100 hover:border-gray-300 transition-colors"
                               >
-                                  {sc.icon}
-                                  {sc.label}
+                                  {renderShortcutIcon(sc.icon)}
+                                  {sc.name}
                               </button>
                           ))}
                           <div className="relative" ref={shortcutMenuRef}>
@@ -3962,7 +4286,7 @@ const ProjectDetailView: React.FC<{
                               </button>
                               {showShortcutMenu && (
                                   <div className="absolute bottom-full left-0 mb-2 w-48 bg-white border border-gray-100 rounded-xl shadow-xl z-50 py-1 animate-in fade-in zoom-in-95 origin-bottom-left">
-                                      {SHORTCUT_COMMANDS.slice(2).map(sc => (
+                                      {shortcuts.slice(2).map(sc => (
                                           <button 
                                               key={sc.id}
                                               onClick={() => {
@@ -3971,8 +4295,8 @@ const ProjectDetailView: React.FC<{
                                               }}
                                               className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3"
                                           >
-                                              {sc.icon}
-                                              {sc.label}
+                                              {renderShortcutIcon(sc.icon)}
+                                              {sc.name}
                                           </button>
                                       ))}
                                   </div>
@@ -3980,7 +4304,7 @@ const ProjectDetailView: React.FC<{
                           </div>
                       </div>
                       <button 
-                          onClick={() => alert("Shortcut Settings - Coming Soon")}
+                          onClick={() => setShowShortcutOverlay(true)}
                           className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
                       >
                           <SettingsIcon className="w-4 h-4" />
