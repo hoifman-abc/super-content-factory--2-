@@ -412,6 +412,185 @@ const stripMarkdownAndHtml = (input?: string): string => {
   return text.trim();
 };
 
+const escapeRegExp = (input: string) => input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const escapeHtml = (input: string) => input
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
+type WechatFormatHints = {
+  redBold: string[];
+  boldOnly: string[];
+  steps: string[];
+};
+
+const sanitizePhraseList = (input: any, maxItems: number, maxLen: number) => {
+  if (!Array.isArray(input)) return [];
+  const normalized = input
+    .map((item: any) => String(item || '').trim())
+    .filter((item: string) => item && item.length <= maxLen);
+  return Array.from(new Set(normalized)).slice(0, maxItems);
+};
+
+const extractJsonObject = (text: string) => {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+};
+
+const detectWechatFormatHints = async (text: string): Promise<{ hints: WechatFormatHints; aiUsed: boolean }> => {
+  const trimmed = (text || '').trim();
+  if (!trimmed) return { hints: { redBold: [], boldOnly: [], steps: [] }, aiUsed: false };
+  const limitedText = trimmed.slice(0, 4000);
+  const systemPrompt = [
+    '你是公众号文章排版助手。',
+    '从正文中识别需要重点强调的词组，分为红色加粗(redBold)与仅加粗(boldOnly)。',
+    '红色加粗必须是短语或短句，禁止整段或整句。',
+    '不要选择以下词：原创、乔巧老师、你的面试陪跑员。',
+    '返回严格 JSON，不要解释：',
+    '{"redBold":["..."],"boldOnly":["..."]}',
+    '要求：redBold 6-12 个，boldOnly 8-16 个，尽量直接来自原文。',
+  ].join('\n');
+  try {
+    const reply = await callOpenRouterChat(
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: limitedText },
+      ],
+      OPENROUTER_FALLBACK_MODEL
+    );
+    const parsed = extractJsonObject(reply) || {};
+    const hints: WechatFormatHints = {
+      redBold: sanitizePhraseList(parsed.redBold, 12, 32),
+      boldOnly: sanitizePhraseList(parsed.boldOnly, 16, 48),
+      steps: [],
+    };
+    return { hints, aiUsed: true };
+  } catch (err) {
+    console.warn('WeChat auto-format AI failed, fallback to basic formatting.', err);
+    return { hints: { redBold: [], boldOnly: [], steps: [] }, aiUsed: false };
+  }
+};
+
+const formatWechatArticleHtml = (plainText: string, hints: WechatFormatHints, images?: string[]) => {
+  const normalized = (plainText || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  let processed = escapeHtml(normalized);
+
+  const bannedPhrases = [
+    '原创',
+    '乔巧老师',
+    '（你的面试陪跑员）',
+    '(你的面试陪跑员)',
+  ].map(escapeHtml);
+
+  const forcedHighlights = [
+    '我自己原创的《2026公考面试一本通3.0》，全文3万2千字，这里面总结了我多年的教学心得',
+  ];
+
+  const ordinalLineRegex = /^\s*第[一二三四五六七八九十]+[、.．:]?\s*[^，。,\.]{0,14}\s*$/;
+  processed = processed
+    .split('\n')
+    .map(line => {
+      const trimmed = line.trim();
+      if (!trimmed) return line;
+      if (ordinalLineRegex.test(trimmed)) {
+        return `<b><span style="color:#E53935">${line}</span></b>`;
+      }
+      return line;
+    })
+    .join('\n');
+
+  const quotePatterns = [
+    /“[^”]{1,120}”/g,
+    /「[^」]{1,120}」/g,
+    /《[^》]{1,120}》/g,
+    /&quot;[^&]{1,120}&quot;/g,
+  ];
+  quotePatterns.forEach((pattern) => {
+    processed = processed.replace(pattern, (m) => `<b>${m}</b>`);
+  });
+
+  const redBold = hints.redBold
+    .map(escapeHtml)
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  const forced = forcedHighlights
+    .map(escapeHtml)
+    .filter(Boolean);
+  const mergedRedBold = Array.from(new Set([...forced, ...redBold]))
+    .sort((a, b) => b.length - a.length);
+  for (const phrase of mergedRedBold) {
+    if (bannedPhrases.includes(phrase)) continue;
+    const re = new RegExp(escapeRegExp(phrase), 'g');
+    processed = processed.replace(re, `<b><span style="color:#E53935">${phrase}</span></b>`);
+  }
+
+  const boldOnly = hints.boldOnly
+    .map(escapeHtml)
+    .filter(Boolean)
+    .filter(p => !bannedPhrases.includes(p))
+    .sort((a, b) => b.length - a.length);
+  for (const phrase of boldOnly) {
+    const re = new RegExp(escapeRegExp(phrase), 'g');
+    processed = processed.replace(re, `<b>${phrase}</b>`);
+  }
+
+  const paragraphs: string[] = [];
+  let buffer: string[] = [];
+  const lines = processed.split('\n');
+  const flush = () => {
+    if (buffer.length === 0) return;
+    const joined = buffer.join('<br/>');
+    paragraphs.push(`<p style="margin:0 0 24px 0;">${joined}</p>`);
+    buffer = [];
+  };
+  const splitLongLine = (line: string) => {
+    const parts = line.split(/([。！？!?])+/);
+    const output: string[] = [];
+    for (let i = 0; i < parts.length; i += 2) {
+      const sentence = (parts[i] || '') + (parts[i + 1] || '');
+      if (sentence.trim()) output.push(sentence);
+    }
+    if (output.length === 0) output.push(line);
+    return output;
+  };
+  const maxSentencePerParagraph = 2;
+  let sentenceCount = 0;
+  for (const line of lines) {
+    if (!line.trim()) {
+      flush();
+      sentenceCount = 0;
+      continue;
+    }
+    const sentences = splitLongLine(line);
+    for (const sentence of sentences) {
+      buffer.push(sentence);
+      sentenceCount += 1;
+      if (sentenceCount >= maxSentencePerParagraph) {
+        flush();
+        sentenceCount = 0;
+      }
+    }
+  }
+  flush();
+
+  if (images && images.length > 0) {
+    images.forEach(src => {
+      if (!src) return;
+      paragraphs.push(`<p style="margin:0 0 24px 0;"><img src="${escapeHtml(src)}" /></p>`);
+    });
+  }
+
+  return `<div style="line-height:1.5">${paragraphs.join('')}</div>`;
+};
+
 const generateIdempotencyKey = () => {
   if (typeof crypto !== 'undefined' && (crypto as any).randomUUID) {
     return (crypto as any).randomUUID();
@@ -1636,6 +1815,17 @@ const PublishModal: React.FC<{
 
       let finalBody = baseContent;
       let truncated = false;
+      let contentFormat: 'markdown' | 'html' = 'markdown';
+
+      if (wechatType === 'article') {
+        const plainText = stripMarkdownAndHtml(baseContent);
+        const { hints, aiUsed } = await detectWechatFormatHints(plainText);
+        if (!aiUsed) {
+          setNotice(prev => prev ? prev : 'AI 自动排版失败，已使用基础排版规则');
+        }
+        finalBody = formatWechatArticleHtml(plainText, hints, extractedImages);
+        contentFormat = 'html';
+      }
 
       if (wechatType === 'greenbook') {
         if (!mergedImages || mergedImages.length === 0) {
@@ -1653,7 +1843,8 @@ const PublishModal: React.FC<{
         }
       }
 
-      const summary = finalBody ? finalBody.slice(0, 120) : undefined;
+      const summarySource = wechatType === 'article' ? stripMarkdownAndHtml(baseContent) : finalBody;
+      const summary = summarySource ? summarySource.slice(0, 120) : undefined;
       const articleType: 'news' | 'newspic' = wechatType === 'greenbook' ? 'newspic' : 'news';
 
       let coverImageToUse: string | undefined = resolvedCover || undefined;
@@ -1671,7 +1862,7 @@ const PublishModal: React.FC<{
         content: finalBody || (work?.content || ''),
         summary,
         coverImage: coverImageToUse,
-        contentFormat: 'markdown',
+        contentFormat,
         articleType,
       };
 
@@ -3076,7 +3267,16 @@ const ProjectDetailView: React.FC<{
     return `附件列表（请作为上下文使用）：\n${JSON.stringify(attachments, null, 2)}`;
   };
 
-  const handleSendMessage = async (messageOverride?: string, options?: { agentMode?: 'agent' | 'ask' | 'write' | 'search' | 'image'; modelId?: string; imageModelId?: string }) => {
+  const handleSendMessage = async (
+    messageOverride?: string,
+    options?: {
+      agentMode?: 'agent' | 'ask' | 'write' | 'search' | 'image';
+      modelId?: string;
+      imageModelId?: string;
+      titleOverride?: string;
+      prependTitle?: boolean;
+    }
+  ) => {
     const agentMode = options?.agentMode ?? selectedAgentMode;
     const modelOverride = options?.modelId;
 
@@ -3116,8 +3316,16 @@ const ProjectDetailView: React.FC<{
 
       const modelId = modelOverride || selectedModel || OPENROUTER_FALLBACK_MODEL;
       const reply = await callOpenRouterChat(payloadHistory, modelId);
-      setChatHistory(prev => [...prev, { role: 'assistant', content: reply }]);
-      addWorkFromContent(reply);
+      const finalReply = (() => {
+        const titleLine = (options?.titleOverride || '').trim();
+        if (!titleLine) return reply;
+        const normalized = titleLine.replace(/\s+/g, ' ').trim();
+        if (!normalized) return reply;
+        if (options?.prependTitle === false) return reply;
+        return `${normalized}\n\n${reply}`;
+      })();
+      setChatHistory(prev => [...prev, { role: 'assistant', content: finalReply }]);
+      addWorkFromContent(finalReply, options?.titleOverride);
     } catch (err: any) {
       const msg = err?.message || '调用大模型失败';
       setChatError(msg);
@@ -3135,7 +3343,21 @@ const ProjectDetailView: React.FC<{
     if (agentMode === 'image' && cmd.imageModelId) setSelectedImageModel(cmd.imageModelId);
     if (agentMode !== 'image' && cmd.modelId) setSelectedModel(cmd.modelId);
 
+    const selectedTexts = chatReferences
+      .filter(ref => (ref as any).type === 'text-selection')
+      .map(ref => (ref as any).content || (ref as any).preview || '')
+      .map(text => String(text || '').trim())
+      .filter(Boolean);
+
+    const appendedInput = String(chatInput || '').trim();
+    const appended = [...selectedTexts, appendedInput].filter(Boolean).join('\n');
+    const titleOverride = appended;
+
     let content = cmd.prompt;
+    if (appended) {
+      const needsSpacer = !content.endsWith('：') && !content.endsWith(':');
+      content = `${content}${needsSpacer ? '\n' : ''}${appended}`;
+    }
     if (chatReferences.length > 0) {
         const refTitles = chatReferences.map(r => {
              const title = (r as any).title || (r as any).name || "Untitled";
@@ -3145,7 +3367,7 @@ const ProjectDetailView: React.FC<{
         content += `\n\n(References: ${refTitles})`;
     }
 
-    handleSendMessage(content, { agentMode, modelId: modelId || undefined, imageModelId: cmd.imageModelId });
+    handleSendMessage(content, { agentMode, modelId: modelId || undefined, imageModelId: cmd.imageModelId, titleOverride, prependTitle: true });
   };
 
   const addShortcutCommand = () => {
@@ -3359,11 +3581,24 @@ const ProjectDetailView: React.FC<{
     return match ? match[1] : undefined;
   };
 
-  const addWorkFromContent = (content: string) => {
+  const normalizeTitleLine = (input: string) => {
+    return (input || '')
+      .replace(/\s+/g, ' ')
+      .replace(/^[#*\-\s]+/, '')
+      .trim();
+  };
+
+  const clampTitle = (input: string, maxLen = 80) => {
+    if (!input) return 'Chat Response';
+    return input.length > maxLen ? `${input.slice(0, maxLen)}...` : input;
+  };
+
+  const addWorkFromContent = (content: string, titleOverride?: string) => {
     const imageUrl = extractFirstImage(content);
+    const overrideTitle = normalizeTitleLine(titleOverride || '');
     const newWork: Work = {
       id: `work-${Date.now()}`,
-      title: deriveTitleFromContent(content),
+      title: overrideTitle ? clampTitle(overrideTitle) : deriveTitleFromContent(content),
       type: 'Page',
       date: 'Just now',
       content,
