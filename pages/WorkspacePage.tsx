@@ -491,19 +491,35 @@ const formatWechatArticleHtml = (plainText: string, hints: WechatFormatHints, im
   ].map(escapeHtml);
 
   const forcedHighlights = [
+    '我自己原创的《2026公考面试一本通3.0》，全文3万2千字',
     '我自己原创的《2026公考面试一本通3.0》，全文3万2千字，这里面总结了我多年的教学心得',
   ];
 
-  const ordinalLineRegex = /^\s*第[一二三四五六七八九十]+[、.．:]?\s*[^，。,\.]{0,14}\s*$/;
+  const ordinalTokenRegex = /第[一二三四五六七八九十]+[、.．:]/g;
+  const highlightOrdinalSegments = (line: string) => {
+    const matches = Array.from(line.matchAll(ordinalTokenRegex));
+    if (matches.length === 0) return line;
+    let result = '';
+    let lastIndex = 0;
+    for (let i = 0; i < matches.length; i += 1) {
+      const start = matches[i].index ?? 0;
+      const end = i + 1 < matches.length ? (matches[i + 1].index ?? line.length) : line.length;
+      if (start > lastIndex) result += line.slice(lastIndex, start);
+      const segment = line.slice(start, end);
+      result += `<b><span style="color:#E53935">${segment}</span></b>`;
+      lastIndex = end;
+    }
+    if (lastIndex < line.length) {
+      result += line.slice(lastIndex);
+    }
+    return result;
+  };
   processed = processed
     .split('\n')
     .map(line => {
       const trimmed = line.trim();
       if (!trimmed) return line;
-      if (ordinalLineRegex.test(trimmed)) {
-        return `<b><span style="color:#E53935">${line}</span></b>`;
-      }
-      return line;
+      return highlightOrdinalSegments(line);
     })
     .join('\n');
 
