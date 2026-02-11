@@ -406,6 +406,9 @@ const stripMarkdownAndHtml = (input?: string): string => {
   text = text.replace(/(^|\n)\s*[-*+]\s+/g, '\n');
   text = text.replace(/```[\s\S]*?```/g, '');
   text = text.replace(/`([^`]*)`/g, '$1');
+  text = text.replace(/(\*\*|__)(.*?)\1/g, '$2');
+  text = text.replace(/\*\*/g, '');
+  text = text.replace(/__/g, '');
   // Normalize whitespace
   text = text.replace(/\r\n/g, '\n');
   text = text.replace(/\n{3,}/g, '\n\n');
@@ -481,7 +484,9 @@ const detectWechatFormatHints = async (text: string): Promise<{ hints: WechatFor
 
 const formatWechatArticleHtml = (plainText: string, hints: WechatFormatHints, images?: string[]) => {
   const normalized = (plainText || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  let processed = escapeHtml(normalized);
+  let processed = escapeHtml(normalized)
+    .replace(/\*\*/g, '')
+    .replace(/__/g, '');
 
   const bannedPhrases = [
     '原创',
@@ -596,6 +601,24 @@ const formatWechatArticleHtml = (plainText: string, hints: WechatFormatHints, im
     }
   }
   flush();
+
+  // Enforce consistent spacing: split by newline first, then split each line by sentence punctuation.
+  paragraphs.length = 0;
+  const splitIntoSentenceChunks = (line: string) => {
+    const chunks = line.match(/[^。！？?!；;]+[。！？?!；;]?/g) || [];
+    return chunks
+      .map(chunk => chunk.trim())
+      .filter(Boolean);
+  };
+  for (const rawLine of processed.split('\n')) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const sentenceChunks = splitIntoSentenceChunks(line);
+    const finalChunks = sentenceChunks.length > 0 ? sentenceChunks : [line];
+    for (const chunk of finalChunks) {
+      paragraphs.push(`<p style="margin:0 0 24px 0;">${chunk}</p>`);
+    }
+  }
 
   if (images && images.length > 0) {
     images.forEach(src => {
@@ -1011,6 +1034,62 @@ const MarkdownMessage: React.FC<{ content: string }> = ({ content }) => (
     </ReactMarkdown>
   </div>
 );
+
+const CollapsibleMarkdownMessage: React.FC<{ content: string; clampLines?: number }> = ({
+  content,
+  clampLines = 5,
+}) => {
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [canExpand, setCanExpand] = useState(false);
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [content]);
+
+  useEffect(() => {
+    if (expanded) return;
+    const el = contentRef.current;
+    if (!el) return;
+
+    const checkOverflow = () => {
+      setCanExpand(el.scrollHeight - el.clientHeight > 1);
+    };
+
+    checkOverflow();
+    window.addEventListener('resize', checkOverflow);
+    return () => window.removeEventListener('resize', checkOverflow);
+  }, [content, expanded]);
+
+  return (
+    <div>
+      <div
+        ref={contentRef}
+        style={
+          expanded
+            ? undefined
+            : {
+                display: '-webkit-box',
+                WebkitLineClamp: clampLines,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
+              }
+        }
+      >
+        <MarkdownMessage content={content} />
+      </div>
+      {canExpand && (
+        <button
+          type="button"
+          onClick={() => setExpanded(prev => !prev)}
+          className="mt-1 text-[11px] leading-4 text-gray-500 hover:text-gray-800 transition-colors"
+        >
+          {expanded ? '收起' : '展开'}
+        </button>
+      )}
+    </div>
+  );
+};
 
 const getModelIcon = (provider: string) => {
     switch (provider) {
@@ -4555,11 +4634,11 @@ const ProjectDetailView: React.FC<{
                     {chatHistory.map((msg, idx) => (
                       <div key={idx} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                           {msg.role === 'user' ? (
-                            <div className="bg-white p-3 rounded-2xl rounded-tr-sm shadow-sm border border-gray-100 text-sm text-gray-800 max-w-[90%] mb-1">
+                            <div className="bg-blue-50 p-3 rounded-2xl rounded-tr-sm shadow-sm border border-blue-100 text-sm text-gray-800 max-w-[90%] mb-1">
                                 <div className="flex items-center gap-1 mb-1 text-purple-500">
                                   <SparklesIcon className="w-3 h-3" />
                                 </div>
-                                <MarkdownMessage content={msg.content} />
+                                <CollapsibleMarkdownMessage content={msg.content} clampLines={5} />
                             </div>
                           ) : (
                             msg.type === 'error' ? (
@@ -4585,7 +4664,7 @@ const ProjectDetailView: React.FC<{
                                         <MessageSquareIcon className="w-4 h-4" />
                                     </div>
                                     <div className="flex-1 flex flex-col gap-2">
-                                      <div className="bg-white p-3 rounded-2xl rounded-tl-sm shadow-sm border border-gray-100 text-sm text-gray-800">
+                                      <div className="bg-gray-50 p-3 rounded-2xl rounded-tl-sm shadow-sm border border-gray-200 text-sm text-gray-800">
                                           <MarkdownMessage content={msg.content} />
                                       </div>
                                       <div className="flex items-center gap-2 text-gray-500">
