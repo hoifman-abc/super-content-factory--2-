@@ -92,7 +92,7 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
   const [text, setText] = useState<string>('');
   const [ratio, setRatio] = useState<CanvasRatio>(CanvasRatio.RATIO_3_4);
   const [theme, setTheme] = useState<CanvasTheme>(CanvasTheme.WHITE);
-  const [template, setTemplate] = useState<CanvasTemplate>(CanvasTemplate.MINIMAL);
+  const [template, setTemplate] = useState<CanvasTemplate>(CanvasTemplate.CLASSIC);
   const [fontSize, setFontSize] = useState<number>(36);
   const [pages, setPages] = useState<PageContent[]>([]);
   const [coverData, setCoverData] = useState<CoverData | null>(null);
@@ -109,9 +109,29 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
 
   const currentTheme = THEME_MAP[theme];
   const currentTemplate = TEMPLATE_MAP[template];
+  const isMinimalTemplate = template === CanvasTemplate.MINIMAL;
+  const shouldShowCover = useMemo(() => template === CanvasTemplate.CLASSIC && !!(title || coverData), [template, title, coverData]);
+  const minimalInlineTitle = useMemo(() => (title || coverData?.title || '').trim(), [title, coverData]);
+  const minimalTopLineColor = 'rgba(156, 163, 175, 0.5)';
+  const minimalCharLineColor = 'rgba(156, 163, 175, 0.35)';
 
-  const hasCover = useMemo(() => !!(title || coverData), [title, coverData]);
-  const totalPreviewPages = useMemo(() => (hasCover ? 1 : 0) + pages.length, [hasCover, pages]);
+  const buildMinimalHeroHtml = useCallback((heroTitle: string) => {
+    const safeTitle = heroTitle
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+    const decoratedChars = Array.from(safeTitle).map((char) => {
+      if (char === '\n') return '<br />';
+      if (char === ' ') return '<span style="display: inline-block; width: 0.35em;"></span>';
+      return `<span style="display: inline-block; border-bottom: 9px solid ${minimalCharLineColor}; padding-bottom: 0.05em; margin-bottom: 0.08em;">${char}</span>`;
+    }).join('');
+
+    return `<div style="margin-bottom: 52px;"><div style="height: 2px; width: 100%; background: ${minimalTopLineColor}; border-radius: 9999px; margin-bottom: 34px;"></div><h1 style="font-size: ${fontSize * 2.3}px; line-height: 1.1; font-weight: 900; color: ${currentTheme.title}; margin: 0; text-align: left; word-break: break-all; font-family: ${SONG_FONT_STACK};">${decoratedChars}</h1></div>`;
+  }, [currentTheme.title, fontSize, minimalCharLineColor, minimalTopLineColor]);
+
+  const totalPreviewPages = useMemo(() => (shouldShowCover ? 1 : 0) + pages.length, [shouldShowCover, pages]);
   
   useEffect(() => {
     if (initialTitle && initialTitle !== title) {
@@ -191,12 +211,16 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
               backgroundColor: highlightBg, 
               color: 'inherit',
               fontWeight: 900,
+              padding: '2px 6px',
+              borderRadius: '4px',
+              boxDecorationBreak: 'clone',
+              WebkitBoxDecorationBreak: 'clone',
               textDecoration: 'underline',
               textUnderlineOffset: '4px',
               textDecorationThickness: '2px',
               textDecorationColor: underlineColor
             }} 
-            className="px-1.5 py-0.5 rounded-sm inline-block mx-0.5"
+            className="mx-0.5"
           >
             {innerText}
           </mark>
@@ -211,7 +235,10 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
     let style = `font-size: ${fSize}px; line-height: ${lineH}; margin-bottom: 1.5em; white-space: pre-wrap; word-break: break-all; font-family: ${SONG_FONT_STACK}; font-weight: 600;`;
     const highlightBg = theme === CanvasTheme.DARK ? 'rgba(180, 83, 9, 0.4)' : 'rgba(254, 249, 195, 0.8)';
     
-    let content = block.text.replace(/==(.*?)==/g, `<mark style="background-color: ${highlightBg}; color: inherit; font-weight: 900; padding: 2px 6px; border-radius: 4px; text-decoration: underline; text-underline-offset: 4px;">$1</mark>`);
+    let content = block.text.replace(
+      /==(.*?)==/g,
+      `<mark style="background-color: ${highlightBg}; color: inherit; font-weight: 900; padding: 2px 6px; border-radius: 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; text-decoration: underline; text-underline-offset: 4px;">$1</mark>`
+    );
     
     if (block.type === 'title') {
       style = `font-size: ${fSize * 1.4}px; font-weight: 900; margin-bottom: 1em; line-height: 1.3; font-family: ${SONG_FONT_STACK};`;
@@ -224,7 +251,7 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
   };
 
   const paginateText = useCallback(() => {
-    if (!text || !measureRef.current) {
+    if (!measureRef.current) {
       setPages([]);
       return;
     }
@@ -233,6 +260,7 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
     const lines = text.split('\n').filter(l => l.trim() !== '');
     const verticalPadding = currentTemplate.hasBorder ? 320 : 280;
     const maxContentHeight = config.height - verticalPadding; 
+    const shouldInjectMinimalHero = isMinimalTemplate && !!minimalInlineTitle;
     
     const allBlocks: ContentBlock[] = lines.map(line => {
       const trimmed = line.trim();
@@ -247,6 +275,11 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
     const tester = measureRef.current;
     tester.style.width = `${config.width - 200}px`;
     tester.innerHTML = '';
+    if (shouldInjectMinimalHero) {
+      const intro = document.createElement('div');
+      intro.innerHTML = buildMinimalHeroHtml(minimalInlineTitle);
+      tester.appendChild(intro);
+    }
 
     for (const block of allBlocks) {
       const tempDiv = document.createElement('div');
@@ -274,9 +307,11 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
 
     if (currentPageBlocks.length > 0) {
       currentPages.push({ blocks: currentPageBlocks, pageIndex: currentPages.length });
+    } else if (currentPages.length === 0 && shouldInjectMinimalHero) {
+      currentPages.push({ blocks: [], pageIndex: 0 });
     }
     setPages(currentPages);
-  }, [text, ratio, fontSize, theme, template]);
+  }, [text, ratio, fontSize, theme, template, isMinimalTemplate, minimalInlineTitle, buildMinimalHeroHtml]);
 
   useEffect(() => {
     paginateText();
@@ -495,10 +530,10 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
 
   const renderAllPagesToImages = useCallback(async (pixelRatio: number = 2) => {
     if (pages.length === 0 && !title) return [];
-    const hasCover = title || coverData;
+    const shouldRenderCover = template === CanvasTemplate.CLASSIC && !!(title || coverData);
     const rendered: { fileName: string; dataUrl: string }[] = [];
 
-    if (hasCover) {
+    if (shouldRenderCover) {
       const coverEl = document.getElementById('page-cover');
       if (coverEl) {
         const dataUrl = await toPng(coverEl, { 
@@ -518,11 +553,11 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
           backgroundColor: currentTheme.bg,
           style: { transform: 'scale(1)', margin: '0', padding: '0' }
         });
-        rendered.push({ fileName: `xhs_page_${hasCover ? i + 2 : i + 1}.png`, dataUrl });
+        rendered.push({ fileName: `xhs_page_${shouldRenderCover ? i + 2 : i + 1}.png`, dataUrl });
       }
     }
     return rendered;
-  }, [pages, title, coverData, currentTheme.bg]);
+  }, [pages, title, coverData, currentTheme.bg, template]);
 
   const exportAll = async () => {
     setIsProcessing(true);
@@ -569,7 +604,7 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
           title,
           text,
           images,
-          coverImage: coverData?.imageUrl || images[0],
+          coverImage: shouldShowCover && coverData?.imageUrl ? coverData.imageUrl : images[0],
         });
       } catch (error) {
         console.error(error);
@@ -579,7 +614,7 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
 
     window.addEventListener('xhs-longimage-save', handleSave as EventListener);
     return () => window.removeEventListener('xhs-longimage-save', handleSave as EventListener);
-  }, [renderAllPagesToImages, title, text, coverData]);
+  }, [renderAllPagesToImages, title, text, coverData, shouldShowCover]);
 
   const PageDecoration = ({ pageNum }: { pageNum: string }) => {
     return (
@@ -666,7 +701,7 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
           <div className="pt-2 border-t border-gray-100 space-y-4">
             <div className="flex items-center gap-2 text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em]"><Layout className="w-3 h-3" /> 排版模板</div>
             <div className="flex gap-2">
-              {(Object.keys(TEMPLATE_MAP) as CanvasTemplate[]).map((temp) => (
+              {[CanvasTemplate.CLASSIC, CanvasTemplate.MINIMAL, CanvasTemplate.MAGAZINE].map((temp) => (
                 <button 
                   key={temp} 
                   onClick={() => setTemplate(temp)} 
@@ -709,7 +744,7 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
       </aside>
 
       <main className="flex-1 relative flex flex-col items-center justify-start bg-[#F8F9FB] overflow-hidden p-6">
-        {!hasCover && pages.length === 0 ? (
+        {!shouldShowCover && pages.length === 0 ? (
           <div className="flex flex-col items-center justify-center text-center opacity-20 max-w-sm">
             <div className="w-24 h-24 bg-gray-200 rounded-full flex items-center justify-center mb-6"><TypeIcon className="w-12 h-12 text-gray-400" /></div>
             <h3 className="text-xl font-black mb-2">排版大师为您服务</h3>
@@ -745,7 +780,7 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
                   transition: 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1)'
                 }}
               >
-                {hasCover && (
+                {shouldShowCover && (
                   <div className="w-full flex-shrink-0 flex items-center justify-center h-full">
                     <div 
                       className="flex flex-col items-center gap-6 will-change-[transform,opacity]"
@@ -814,9 +849,9 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
                 )}
 
                 {pages.map((page, index) => {
-                  const slideIndex = hasCover ? index + 1 : index;
+                  const slideIndex = shouldShowCover ? index + 1 : index;
                   const isActive = currentPreviewIndex === slideIndex;
-                  const pageDisplayNum = (hasCover ? 2 : 1) + index;
+                  const pageDisplayNum = (shouldShowCover ? 2 : 1) + index;
                   const pageNumStr = pageDisplayNum < 10 ? `0${pageDisplayNum}` : `${pageDisplayNum}`;
                   
                   return (
@@ -835,6 +870,32 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
                         >
                           <div id={`page-${index}`} style={{ width: `${RATIO_MAP[ratio].width}px`, height: `${RATIO_MAP[ratio].height}px`, backgroundColor: currentTheme.bg, transform: 'scale(0.45)', transformOrigin: 'top left', display: 'flex', flexDirection: 'column', position: 'relative' }}>
                             <div className="flex-1 px-[100px] py-[100px]">
+                              {isMinimalTemplate && index === 0 && minimalInlineTitle && (
+                                <div style={{ marginBottom: '52px' }}>
+                                  <div style={{ height: '2px', width: '100%', background: minimalTopLineColor, borderRadius: '9999px', marginBottom: '34px' }} />
+                                  <h1 style={{ fontSize: `${fontSize * 2.3}px`, lineHeight: 1.1, fontWeight: 900, color: currentTheme.title, margin: 0, textAlign: 'left', wordBreak: 'break-all', fontFamily: SONG_FONT_STACK }}>
+                                    {Array.from(minimalInlineTitle).map((char, charIdx) => {
+                                      if (char === '\n') return <br key={`minimal-title-br-${charIdx}`} />;
+                                      if (char === ' ') {
+                                        return <span key={`minimal-title-space-${charIdx}`} style={{ display: 'inline-block', width: '0.35em' }} />;
+                                      }
+                                      return (
+                                        <span
+                                          key={`minimal-title-char-${charIdx}`}
+                                          style={{
+                                            display: 'inline-block',
+                                            borderBottom: `9px solid ${minimalCharLineColor}`,
+                                            paddingBottom: '0.05em',
+                                            marginBottom: '0.08em'
+                                          }}
+                                        >
+                                          {char}
+                                        </span>
+                                      );
+                                    })}
+                                  </h1>
+                                </div>
+                              )}
                               {page.blocks.map((block, bIdx) => (
                                 <div key={bIdx} style={{ 
                                   fontSize: `${fontSize * (block.type === 'title' ? 1.4 : 1)}px`,

@@ -88,9 +88,9 @@ export const THEME_MAP: Record<CanvasTheme, ThemeConfig> = {
 };
 
 export enum CanvasTemplate {
+  CLASSIC = 'classic',
   MINIMAL = 'minimal',
   MAGAZINE = 'magazine',
-  CLASSIC = 'classic',
 }
 
 export interface TemplateConfig {
@@ -101,6 +101,12 @@ export interface TemplateConfig {
 }
 
 export const TEMPLATE_MAP: Record<CanvasTemplate, TemplateConfig> = {
+  [CanvasTemplate.CLASSIC]: {
+    label: '经典',
+    hasBorder: false,
+    headerStyle: 'none',
+    footerStyle: 'side',
+  },
   [CanvasTemplate.MINIMAL]: {
     label: '极简',
     hasBorder: false,
@@ -112,11 +118,5 @@ export const TEMPLATE_MAP: Record<CanvasTemplate, TemplateConfig> = {
     hasBorder: true,
     headerStyle: 'line',
     footerStyle: 'center',
-  },
-  [CanvasTemplate.CLASSIC]: {
-    label: '经典',
-    hasBorder: false,
-    headerStyle: 'dot',
-    footerStyle: 'side',
   },
 };
