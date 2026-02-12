@@ -33,10 +33,13 @@ type XhsLongImageToolProps = {
 };
 
 const SONG_FONT_STACK = "'FZXiaoBiaoSong', 'Songti SC', 'Noto Serif SC', 'SimSun', serif";
+const BODY_LINE_HEIGHT = 1.75;
+const BLOCK_MARGIN_EM = 1.15;
 const OPENROUTER_BASE_URL = import.meta.env.VITE_OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
 const OPENROUTER_SITE_URL = import.meta.env.VITE_OPENROUTER_SITE_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 const OPENROUTER_IMAGE_MODEL = import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_2_5_FLASH_IMAGE || 'google/gemini-2.5-flash-image';
 const OPENROUTER_TEXT_MODEL = import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_3_PRO || import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_2_5_PRO || 'google/gemini-2.5-pro';
+const OPENROUTER_LAYOUT_MODEL = import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_3_PRO || import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_2_5_PRO || 'google/gemini-2.5-pro';
 
 const callOpenRouterJson = async (prompt: string, model: string = OPENROUTER_TEXT_MODEL) => {
   const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY;
@@ -231,8 +234,8 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
   };
 
   const getBlockHTML = (block: ContentBlock, fSize: number) => {
-    const lineH = 1.9; 
-    let style = `font-size: ${fSize}px; line-height: ${lineH}; margin-bottom: 1.5em; white-space: pre-wrap; word-break: break-all; font-family: ${SONG_FONT_STACK}; font-weight: 600;`;
+    const lineH = BODY_LINE_HEIGHT; 
+    let style = `font-size: ${fSize}px; line-height: ${lineH}; margin-bottom: ${BLOCK_MARGIN_EM}em; white-space: pre-wrap; word-break: break-all; font-family: ${SONG_FONT_STACK}; font-weight: 600;`;
     const highlightBg = theme === CanvasTheme.DARK ? 'rgba(180, 83, 9, 0.4)' : 'rgba(254, 249, 195, 0.8)';
     
     let content = block.text.replace(
@@ -241,10 +244,10 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
     );
     
     if (block.type === 'title') {
-      style = `font-size: ${fSize * 1.4}px; font-weight: 900; margin-bottom: 1em; line-height: 1.3; font-family: ${SONG_FONT_STACK};`;
+      style = `font-size: ${fSize * 1.4}px; font-weight: 900; margin-bottom: ${BLOCK_MARGIN_EM}em; line-height: 1.3; font-family: ${SONG_FONT_STACK};`;
       return `<h2 style="${style}">${content}</h2>`;
     } else if (block.type === 'quote') {
-      style = `font-size: ${fSize}px; border-left: 8px solid #ddd; padding-left: 30px; margin-bottom: 1.5em; line-height: ${lineH}; font-family: ${SONG_FONT_STACK}; font-weight: 600;`;
+      style = `font-size: ${fSize}px; border-left: 8px solid #ddd; padding-left: 30px; margin-bottom: ${BLOCK_MARGIN_EM}em; line-height: ${lineH}; font-family: ${SONG_FONT_STACK}; font-weight: 600;`;
       return `<blockquote style="${style}">${content}</blockquote>`;
     }
     return `<p style="${style}">${content}</p>`;
@@ -317,34 +320,199 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
     paginateText();
   }, [paginateText]);
 
+  const normalizeFormattedBody = (value: string) => value
+    .replace(/\r/g, '')
+    .replace(/^#\s*/gm, '')
+    .replace(/^>\s*/gm, '')
+    .replace(/==/g, '')
+    .replace(/[ \t\n]/g, '');
+
+  const applySentenceLineBreaks = (value: string) => {
+    const punctuations = new Set(['。', '！', '？', '；', '!', '?', ';']);
+    const closers = new Set(['”', '’', '」', '』', '】', '）', ')', '》', '〉']);
+    const chars = Array.from(value.replace(/\r/g, ''));
+    let result = '';
+
+    for (let i = 0; i < chars.length; i++) {
+      const ch = chars[i];
+      result += ch;
+      if (!punctuations.has(ch)) continue;
+
+      let j = i + 1;
+      while (j < chars.length && closers.has(chars[j])) {
+        result += chars[j];
+        i = j;
+        j += 1;
+      }
+
+      // Keep highlight syntax intact: avoid inserting newline between punctuation and nearby "==".
+      let k = j;
+      while (k < chars.length && (chars[k] === ' ' || chars[k] === '\t')) {
+        k += 1;
+      }
+      if (k + 1 < chars.length && chars[k] === '=' && chars[k + 1] === '=') {
+        while (j < k) {
+          result += chars[j];
+          i = j;
+          j += 1;
+        }
+        result += '==';
+        i = k + 1;
+        j = k + 2;
+        while (j + 1 < chars.length && chars[j] === '=' && chars[j + 1] === '=') {
+          result += '==';
+          i = j + 1;
+          j += 2;
+        }
+      }
+
+      if (j < chars.length && chars[j] !== '\n') {
+        result += '\n';
+      }
+    }
+
+    return result;
+  };
+
+  const normalizeHighlightSyntax = (value: string) => {
+    let text = value.replace(/\r/g, '');
+
+    // Balance delimiters: if odd number of "==", drop the last dangling token.
+    const tokenMatches = Array.from(text.matchAll(/==/g));
+    if (tokenMatches.length % 2 === 1) {
+      const last = tokenMatches[tokenMatches.length - 1];
+      const idx = last.index ?? -1;
+      if (idx >= 0) {
+        text = `${text.slice(0, idx)}${text.slice(idx + 2)}`;
+      }
+    }
+
+    // Split multiline highlights into per-line highlights so renderer can parse them reliably.
+    text = text.replace(/==([\s\S]*?)==/g, (_, inner: string) => {
+      if (!inner.includes('\n')) return `==${inner}==`;
+      return inner
+        .split('\n')
+        .map((part) => {
+          const trimmed = part.trim();
+          return trimmed ? `==${trimmed}==` : '';
+        })
+        .join('\n');
+    });
+
+    return text;
+  };
+
+  const applySentenceLineBreaksSafely = (value: string) => {
+    const normalized = normalizeHighlightSyntax(value);
+    const parts = normalized.split(/(==[^=\n]*==)/g);
+    return parts
+      .map((part) => (/^==[^=\n]*==$/.test(part) ? part : applySentenceLineBreaks(part)))
+      .join('');
+  };
+
+  const preferHighlightsOverQuotes = (value: string) => {
+    let quoteCount = 0;
+    return value
+      .split('\n')
+      .map((line) => {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('> ')) return line;
+        quoteCount += 1;
+        if (quoteCount <= 1) return line;
+        const quoteContent = trimmed.replace(/^>\s*/, '').trim();
+        return quoteContent ? `==${quoteContent}==` : '';
+      })
+      .join('\n');
+  };
+
+  const enhanceHighlightPhrases = (value: string) => {
+    // Avoid overly fragmented highlights like 2-3 characters.
+    let updated = value.replace(/==([^=\n]{1,3})==/g, '$1');
+    const lines = updated.split('\n');
+    const emotionHints = ['别怕', '放心', '正常', '真诚', '勇敢', '坦诚', '不完美', '我想告诉你', '我想说', '我会', '我决定', '必杀技'];
+    const existingHighlights = (updated.match(/==[^=\n]+==/g) || []).length;
+    let autoBudget = Math.max(0, 4 - existingHighlights);
+
+    updated = lines.map((line) => {
+      if (autoBudget <= 0) return line;
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('# ') || trimmed.startsWith('> ') || /==[^=\n]+==/.test(trimmed)) return line;
+
+      const content = trimmed.replace(/^[\-*]\s*/, '');
+      const len = content.replace(/\s/g, '').length;
+      const sentenceLike = /[。！？!?]$/.test(content);
+      const hasEmotion = emotionHints.some((hint) => content.includes(hint));
+      const hasIntent = /我(想|会|要|希望|决定|相信|告诉你)/.test(content);
+
+      if (sentenceLike && len >= 8 && len <= 30 && (hasEmotion || hasIntent)) {
+        autoBudget -= 1;
+        return `==${trimmed}==`;
+      }
+      return line;
+    }).join('\n');
+
+    return updated;
+  };
+
   const optimizeText = async () => {
-    if (!text && !title) return;
+    if (!text.trim()) return;
     setIsOptimizing(true);
     try {
-      const content = await callOpenRouterJson(
-        `你是一位专业的小红书运营专家。请将以下标题和正文进行排版优化。
+      const formatPrompt = `你是中文内容排版编辑。请只对下列正文做“排版标注”，禁止改写内容。
 
-当前标题：${title}
-当前正文：
+正文原文：
 ${text}
 
-规则：
-1. 优化标题，使其更有张力。
-2. 使用 "# 标题" 标记正文中的核心重点句子作为内文大字标题。
-3. 使用 "> 引用" 标记金句、名言或需要强调的内容。
-4. 使用 "==文字==" 标记段落中的关键词语。
-5. 增加适当的 Emoji。
+硬性规则（必须全部满足）：
+1. 不得新增、删除、改写任何原文字符与标点。
+2. 仅允许做三种排版标记：行首 "# "（标题）、行首 "> "（引用）、以及 "==关键短句或关键词=="（高亮）。
+3. 可以通过换行把大段拆成更易读的短段落，尽量在句号、问号、感叹号、分号后换行。
+4. “第一/第二/第三、1./2./3.、一是/二是/三是”等层次句，优先处理为标题。
+5. 优先使用高亮而不是引用；全篇引用最多 1 条，其余重点内容请用高亮。高亮优先“短句级”而不是2-3字词级，例如“别怕，把背挺直了。/我想告诉你，这都很正常。/真诚才是必杀技。”这类完整短句更优先。
+6. 不要新增 Emoji，不要新增解释，不要输出任何多余说明。
 
-请按如下格式返回：
-[NEW_TITLE] 优化的标题
-[NEW_BODY] 优化的正文内容`
-      );
-      const newTitle = content.match(/\[NEW_TITLE\]\s*(.*)/)?.[1] || title;
-      const newBody = content.match(/\[NEW_BODY\]\s*([\s\S]*)/)?.[1] || text;
-      setTitle(newTitle.trim());
-      setText(newBody.trim());
+输出格式严格为：
+[NEW_BODY]
+<排版后的正文>`;
+
+      const content = await callOpenRouterJson(formatPrompt, OPENROUTER_LAYOUT_MODEL);
+      let newBody = (content.match(/\[NEW_BODY\]\s*([\s\S]*)/)?.[1] || '').trim();
+
+      const sourceNormalized = normalizeFormattedBody(text);
+      let resultNormalized = normalizeFormattedBody(newBody);
+
+      if (!newBody || sourceNormalized !== resultNormalized) {
+        const repairPrompt = `你上一次结果没有满足“原文字符与标点完全不变”的硬性约束。请修复。
+
+原文：
+${text}
+
+你的上一次结果：
+${newBody || '[空]'}
+
+再次强调：
+1. 原文字符和标点必须100%保留。
+2. 你只能添加 "# "、"> "、"==" 和换行。
+3. 不要输出任何解释。
+
+输出格式严格为：
+[NEW_BODY]
+<修复后的正文>`;
+        const repaired = await callOpenRouterJson(repairPrompt, OPENROUTER_LAYOUT_MODEL);
+        newBody = (repaired.match(/\[NEW_BODY\]\s*([\s\S]*)/)?.[1] || '').trim();
+        resultNormalized = normalizeFormattedBody(newBody);
+      }
+
+      if (!newBody || sourceNormalized !== resultNormalized) {
+        alert('AI 排版结果包含内容改动，已取消应用。请重试。');
+        return;
+      }
+
+      const quoteAdjusted = preferHighlightsOverQuotes(newBody);
+      const highlightEnhanced = enhanceHighlightPhrases(quoteAdjusted);
+      setText(applySentenceLineBreaksSafely(highlightEnhanced));
     } catch (err) {
-      alert("AI 优化失败");
+      alert("AI 排版润色失败");
     } finally {
       setIsOptimizing(false);
     }
@@ -532,15 +700,18 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
     if (pages.length === 0 && !title) return [];
     const shouldRenderCover = template === CanvasTemplate.CLASSIC && !!(title || coverData);
     const rendered: { fileName: string; dataUrl: string }[] = [];
+    const captureOptions = {
+      pixelRatio,
+      backgroundColor: currentTheme.bg,
+      skipFonts: true,
+      cacheBust: true,
+      style: { transform: 'scale(1)', margin: '0', padding: '0' }
+    };
 
     if (shouldRenderCover) {
       const coverEl = document.getElementById('page-cover');
       if (coverEl) {
-        const dataUrl = await toPng(coverEl, { 
-          pixelRatio,
-          backgroundColor: currentTheme.bg,
-          style: { transform: 'scale(1)', margin: '0', padding: '0' }
-        });
+        const dataUrl = await toPng(coverEl, captureOptions);
         rendered.push({ fileName: 'xhs_page_1_cover.png', dataUrl });
       }
     }
@@ -548,11 +719,7 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
     for (let i = 0; i < pages.length; i++) {
       const element = document.getElementById(`page-${i}`);
       if (element) {
-        const dataUrl = await toPng(element, { 
-          pixelRatio,
-          backgroundColor: currentTheme.bg,
-          style: { transform: 'scale(1)', margin: '0', padding: '0' }
-        });
+        const dataUrl = await toPng(element, captureOptions);
         rendered.push({ fileName: `xhs_page_${shouldRenderCover ? i + 2 : i + 1}.png`, dataUrl });
       }
     }
@@ -561,13 +728,10 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
 
   const exportAll = async () => {
     setIsProcessing(true);
-    const renderedImages = await renderAllPagesToImages();
-    if (renderedImages.length === 0) {
-      setIsProcessing(false);
-      return;
-    }
-    const zip = new JSZip();
     try {
+      const renderedImages = await renderAllPagesToImages();
+      if (renderedImages.length === 0) return;
+      const zip = new JSZip();
       renderedImages.forEach(img => {
         zip.file(img.fileName, img.dataUrl.split(',')[1], { base64: true });
       });
@@ -577,6 +741,7 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
       link.download = `小红书图文_${new Date().getTime()}.zip`;
       link.click();
     } catch (err) {
+      console.error(err);
       alert("导出失败");
     } finally {
       setIsProcessing(false);
@@ -900,8 +1065,8 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
                                 <div key={bIdx} style={{ 
                                   fontSize: `${fontSize * (block.type === 'title' ? 1.4 : 1)}px`,
                                   fontWeight: block.type === 'title' ? 900 : 600,
-                                  lineHeight: block.type === 'title' ? 1.3 : 1.9,
-                                  marginBottom: '1.5em',
+                                  lineHeight: block.type === 'title' ? 1.3 : BODY_LINE_HEIGHT,
+                                  marginBottom: `${BLOCK_MARGIN_EM}em`,
                                   color: block.type === 'title' ? currentTheme.title : block.type === 'quote' ? currentTheme.quote : currentTheme.text,
                                   borderLeft: block.type === 'quote' ? `10px solid ${currentTheme.quoteBorder}` : 'none',
                                   paddingLeft: block.type === 'quote' ? '40px' : '0',

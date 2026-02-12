@@ -274,6 +274,8 @@ const fetchWithProxyFallback = async (url: string, options: RequestInit) => {
   try {
     const res = await fetch(url, options);
     if (res.ok) return res;
+    // 对于 4xx 参数错误，直接返回原响应，避免无意义的跨域重试
+    if (res.status >= 400 && res.status < 500) return res;
     // 2) 若非 2xx，再直接请求真实域名（绕过 dev 代理 502 的情况）
     if (remoteUrl !== url) {
       const direct = await fetch(remoteUrl, options);
@@ -317,6 +319,29 @@ const postWechat = async (path: string, payload: any) => {
     throw new Error(code ? `${code}: ${message}` : message);
   }
   return data;
+};
+
+const uploadDataImageToPublicUrl = async (dataUrl: string): Promise<string> => {
+  const res = await fetch('/local-upload-image', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataUrl }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.url) {
+    throw new Error(data?.message || '图片上传失败');
+  }
+  return String(data.url);
+};
+
+const ensureWechatPublishableImage = async (input: string): Promise<string | null> => {
+  const img = (input || '').trim();
+  if (!img) return null;
+  if (/^https?:\/\//i.test(img)) return img;
+  if (/^data:image\//i.test(img)) {
+    return await uploadDataImageToPublicUrl(img);
+  }
+  return null;
 };
 
 const fetchWechatAccounts = async (): Promise<WechatAccount[]> => {
@@ -643,6 +668,7 @@ type PublishWechatPayload = {
   content: string;
   summary?: string;
   coverImage?: string;
+  mainImages?: string[];
   author?: string;
   contentFormat?: 'markdown' | 'html';
   articleType?: 'news' | 'newspic';
@@ -1927,6 +1953,25 @@ const PublishModal: React.FC<{
           setSubmitError('小绿书至少需要1张图片');
           return;
         }
+        const convertedImages: string[] = [];
+        for (const img of mergedImages) {
+          try {
+            const converted = await ensureWechatPublishableImage(img);
+            if (converted) convertedImages.push(converted);
+          } catch (error: any) {
+            setNotice(prev => prev ? prev : `部分图片上传失败，已跳过：${error?.message || '未知错误'}`);
+          }
+        }
+        const uniqueConvertedImages = Array.from(new Set(convertedImages));
+        if (uniqueConvertedImages.length === 0) {
+          setSubmitError('小绿书发布图片自动上传失败，请重试。');
+          return;
+        }
+
+        // 覆盖为可发布图片列表，后续封面和正文注图都基于该列表
+        mergedImages.length = 0;
+        uniqueConvertedImages.forEach((img) => mergedImages.push(img));
+
         if (finalBody.length > 1000) {
           finalBody = finalBody.slice(0, 1000);
           truncated = true;
@@ -1941,14 +1986,32 @@ const PublishModal: React.FC<{
       const summarySource = wechatType === 'article' ? stripMarkdownAndHtml(baseContent) : finalBody;
       const summary = summarySource ? summarySource.slice(0, 120) : undefined;
       const articleType: 'news' | 'newspic' = wechatType === 'greenbook' ? 'newspic' : 'news';
+      const normalizedImages = mergedImages
+        .map(img => (img || '').trim())
+        .filter(Boolean);
 
       let coverImageToUse: string | undefined = resolvedCover || undefined;
-      if (coverImageToUse?.startsWith('data:')) {
-        coverImageToUse = undefined;
-        setNotice(prev => prev ? prev : '封面为 data URL，已忽略以避免过长导致发布失败');
-      } else if (coverImageToUse && coverImageToUse.length > 240) {
-        coverImageToUse = undefined;
-        setNotice(prev => prev ? prev : '封面链接过长，已忽略以避免发布失败');
+      if (wechatType === 'greenbook') {
+        // 小绿书模式：自动使用作品第一张图做封面（无需用户额外处理）
+        if (!coverImageToUse && normalizedImages.length > 0) {
+          coverImageToUse = normalizedImages[0];
+        }
+        // 后端 cover_image 列长度有限，超长链接不写入 cover_image，改由 mainImages 承载
+        if (coverImageToUse && coverImageToUse.length > 240) {
+          coverImageToUse = undefined;
+          setNotice(prev => prev ? prev : '封面图过长，已自动改用主图列表发布（不写入封面字段）');
+        }
+        if (!coverImageToUse && normalizedImages.length > 0) {
+          coverImageToUse = normalizedImages[0];
+        }
+      } else {
+        if (coverImageToUse?.startsWith('data:')) {
+          coverImageToUse = undefined;
+          setNotice(prev => prev ? prev : '封面为 data URL，已忽略以避免过长导致发布失败');
+        } else if (coverImageToUse && coverImageToUse.length > 240) {
+          coverImageToUse = undefined;
+          setNotice(prev => prev ? prev : '封面链接过长，已忽略以避免发布失败');
+        }
       }
 
       const payload: PublishWechatPayload = {
@@ -1957,6 +2020,9 @@ const PublishModal: React.FC<{
         content: finalBody || (work?.content || ''),
         summary,
         coverImage: coverImageToUse,
+        mainImages: wechatType === 'greenbook'
+          ? (normalizedImages.length > 0 ? normalizedImages : (resolvedCover ? [resolvedCover] : undefined))
+          : undefined,
         contentFormat,
         articleType,
       };
