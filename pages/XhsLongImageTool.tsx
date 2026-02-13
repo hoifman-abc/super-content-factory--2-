@@ -32,9 +32,101 @@ type XhsLongImageToolProps = {
   initialText?: string;
 };
 
-const SONG_FONT_STACK = "'FZXiaoBiaoSong', 'Songti SC', 'Noto Serif SC', 'SimSun', serif";
+const SONG_FONT_STACK = "'FZXiaoBiaoSong', 'Noto Serif SC', 'Songti SC', 'SimSun', serif";
+const TITLE_FONT_STACK = "'SourceHanSerifCNHeavy', 'Source Han Serif CN Heavy', 'Source Han Serif CN', '思源宋体 CN Heavy', '思源宋体 CN', 'FZXiaoBiaoSongGBK', 'FZXiaoBiaoSong', 'Noto Serif SC', 'Songti SC', 'SimSun', serif";
 const BODY_LINE_HEIGHT = 1.75;
 const BLOCK_MARGIN_EM = 1.15;
+const LONGFORM_FONT_EMBED_CSS = `
+@font-face {
+  font-family: 'SourceHanSerifCNHeavy';
+  font-style: normal;
+  font-weight: 400;
+  src: url('/fonts/SourceHanSerifCN-Heavy.otf') format('opentype');
+}
+@font-face {
+  font-family: 'SourceHanSerifCNHeavy';
+  font-style: normal;
+  font-weight: 500;
+  src: url('/fonts/SourceHanSerifCN-Heavy.otf') format('opentype');
+}
+@font-face {
+  font-family: 'SourceHanSerifCNHeavy';
+  font-style: normal;
+  font-weight: 600;
+  src: url('/fonts/SourceHanSerifCN-Heavy.otf') format('opentype');
+}
+@font-face {
+  font-family: 'SourceHanSerifCNHeavy';
+  font-style: normal;
+  font-weight: 700;
+  src: url('/fonts/SourceHanSerifCN-Heavy.otf') format('opentype');
+}
+@font-face {
+  font-family: 'SourceHanSerifCNHeavy';
+  font-style: normal;
+  font-weight: 900;
+  src: url('/fonts/SourceHanSerifCN-Heavy.otf') format('opentype');
+}
+@font-face {
+  font-family: 'FZXiaoBiaoSongGBK';
+  font-style: normal;
+  font-weight: 400;
+  src: url('/fonts/FZXiaoBiaoSongGBK.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'FZXiaoBiaoSongGBK';
+  font-style: normal;
+  font-weight: 500;
+  src: url('/fonts/FZXiaoBiaoSongGBK.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'FZXiaoBiaoSongGBK';
+  font-style: normal;
+  font-weight: 600;
+  src: url('/fonts/FZXiaoBiaoSongGBK.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'FZXiaoBiaoSongGBK';
+  font-style: normal;
+  font-weight: 700;
+  src: url('/fonts/FZXiaoBiaoSongGBK.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'FZXiaoBiaoSongGBK';
+  font-style: normal;
+  font-weight: 900;
+  src: url('/fonts/FZXiaoBiaoSongGBK.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'FZXiaoBiaoSong';
+  font-style: normal;
+  font-weight: 400;
+  src: url('/fonts/FZXiaoBiaoSongJian.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'FZXiaoBiaoSong';
+  font-style: normal;
+  font-weight: 500;
+  src: url('/fonts/FZXiaoBiaoSongJian.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'FZXiaoBiaoSong';
+  font-style: normal;
+  font-weight: 600;
+  src: url('/fonts/FZXiaoBiaoSongJian.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'FZXiaoBiaoSong';
+  font-style: normal;
+  font-weight: 700;
+  src: url('/fonts/FZXiaoBiaoSongJian.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'FZXiaoBiaoSong';
+  font-style: normal;
+  font-weight: 900;
+  src: url('/fonts/FZXiaoBiaoSongJian.ttf') format('truetype');
+}`;
 const OPENROUTER_BASE_URL = import.meta.env.VITE_OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
 const OPENROUTER_SITE_URL = import.meta.env.VITE_OPENROUTER_SITE_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 const OPENROUTER_IMAGE_MODEL = import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_2_5_FLASH_IMAGE || 'google/gemini-2.5-flash-image';
@@ -117,6 +209,13 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
   const minimalInlineTitle = useMemo(() => (title || coverData?.title || '').trim(), [title, coverData]);
   const minimalTopLineColor = 'rgba(156, 163, 175, 0.5)';
   const minimalCharLineColor = 'rgba(156, 163, 175, 0.35)';
+  const contentInsets = useMemo(() => {
+    if (ratio === CanvasRatio.RATIO_9_16) {
+      // 9:16 需要更靠下起排，同时减少底部留白
+      return { top: 188, bottom: 20, side: 100 };
+    }
+    return { top: 100, bottom: 100, side: 100 };
+  }, [ratio]);
 
   const buildMinimalHeroHtml = useCallback((heroTitle: string) => {
     const safeTitle = heroTitle
@@ -131,7 +230,7 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
       return `<span style="display: inline-block; border-bottom: 9px solid ${minimalCharLineColor}; padding-bottom: 0.05em; margin-bottom: 0.08em;">${char}</span>`;
     }).join('');
 
-    return `<div style="margin-bottom: 52px;"><div style="height: 2px; width: 100%; background: ${minimalTopLineColor}; border-radius: 9999px; margin-bottom: 34px;"></div><h1 style="font-size: ${fontSize * 2.3}px; line-height: 1.1; font-weight: 900; color: ${currentTheme.title}; margin: 0; text-align: left; word-break: break-all; font-family: ${SONG_FONT_STACK};">${decoratedChars}</h1></div>`;
+    return `<div style="margin-bottom: 52px;"><div style="height: 2px; width: 100%; background: ${minimalTopLineColor}; border-radius: 9999px; margin-bottom: 34px;"></div><h1 style="font-size: ${fontSize * 2.55}px; line-height: 1.1; font-weight: 900; color: ${currentTheme.title}; margin: 0; text-align: left; word-break: break-all; font-family: ${TITLE_FONT_STACK};">${decoratedChars}</h1></div>`;
   }, [currentTheme.title, fontSize, minimalCharLineColor, minimalTopLineColor]);
 
   const totalPreviewPages = useMemo(() => (shouldShowCover ? 1 : 0) + pages.length, [shouldShowCover, pages]);
@@ -244,7 +343,7 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
     );
     
     if (block.type === 'title') {
-      style = `font-size: ${fSize * 1.4}px; font-weight: 900; margin-bottom: ${BLOCK_MARGIN_EM}em; line-height: 1.3; font-family: ${SONG_FONT_STACK};`;
+      style = `font-size: ${fSize * 1.4}px; font-weight: 900; margin-bottom: ${BLOCK_MARGIN_EM}em; line-height: 1.3; font-family: ${TITLE_FONT_STACK};`;
       return `<h2 style="${style}">${content}</h2>`;
     } else if (block.type === 'quote') {
       style = `font-size: ${fSize}px; border-left: 8px solid #ddd; padding-left: 30px; margin-bottom: ${BLOCK_MARGIN_EM}em; line-height: ${lineH}; font-family: ${SONG_FONT_STACK}; font-weight: 600;`;
@@ -261,8 +360,10 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
 
     const config = RATIO_MAP[ratio];
     const lines = text.split('\n').filter(l => l.trim() !== '');
-    const verticalPadding = currentTemplate.hasBorder ? 320 : 280;
-    const maxContentHeight = config.height - verticalPadding; 
+    const headerHeight = currentTemplate.headerStyle === 'none' ? 0 : 64;
+    const footerHeight = 96;
+    const borderInset = currentTemplate.hasBorder ? 16 : 0;
+    const maxContentHeight = config.height - headerHeight - footerHeight - contentInsets.top - contentInsets.bottom - borderInset;
     const shouldInjectMinimalHero = isMinimalTemplate && !!minimalInlineTitle;
     
     const allBlocks: ContentBlock[] = lines.map(line => {
@@ -276,7 +377,7 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
     let currentPageBlocks: ContentBlock[] = [];
     
     const tester = measureRef.current;
-    tester.style.width = `${config.width - 200}px`;
+    tester.style.width = `${config.width - contentInsets.side * 2}px`;
     tester.innerHTML = '';
     if (shouldInjectMinimalHero) {
       const intro = document.createElement('div');
@@ -314,7 +415,7 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
       currentPages.push({ blocks: [], pageIndex: 0 });
     }
     setPages(currentPages);
-  }, [text, ratio, fontSize, theme, template, isMinimalTemplate, minimalInlineTitle, buildMinimalHeroHtml]);
+  }, [text, ratio, fontSize, theme, template, isMinimalTemplate, minimalInlineTitle, buildMinimalHeroHtml, contentInsets, currentTemplate]);
 
   useEffect(() => {
     paginateText();
@@ -700,10 +801,55 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
     if (pages.length === 0 && !title) return [];
     const shouldRenderCover = template === CanvasTemplate.CLASSIC && !!(title || coverData);
     const rendered: { fileName: string; dataUrl: string }[] = [];
+    const inlineNodeWithComputedStyles = (source: HTMLElement): HTMLElement => {
+      const clone = source.cloneNode(true) as HTMLElement;
+      const walk = (src: Element, dst: Element) => {
+        const computed = window.getComputedStyle(src as Element);
+        const cssText = Array.from(computed)
+          .map((prop) => `${prop}:${computed.getPropertyValue(prop)};`)
+          .join('');
+        (dst as HTMLElement).setAttribute('style', cssText);
+        const srcChildren = Array.from(src.children);
+        const dstChildren = Array.from(dst.children);
+        for (let i = 0; i < srcChildren.length; i++) {
+          if (dstChildren[i]) walk(srcChildren[i], dstChildren[i]);
+        }
+      };
+      walk(source, clone);
+      return clone;
+    };
+    const captureViaBrowserSnapshot = async (node: HTMLElement, width: number, height: number) => {
+      const styledClone = inlineNodeWithComputedStyles(node);
+      // Preview root nodes are rendered with scale(0.45); neutralize it for real-size capture.
+      styledClone.style.transform = 'none';
+      styledClone.style.transformOrigin = 'top left';
+      styledClone.style.margin = '0';
+      styledClone.style.padding = '0';
+      styledClone.style.width = `${width}px`;
+      styledClone.style.height = `${height}px`;
+      const fontCssWithAbsoluteUrls = LONGFORM_FONT_EMBED_CSS.replace(/url\('\/fonts\//g, `url('${window.location.origin}/fonts/`);
+      const resp = await fetch('/local-browser-snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          html: styledClone.outerHTML,
+          width,
+          height,
+          backgroundColor: currentTheme.bg,
+          fontCss: fontCssWithAbsoluteUrls,
+        }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data?.dataUrl) {
+        throw new Error(data?.message || 'Browser snapshot failed');
+      }
+      return String(data.dataUrl);
+    };
     const captureOptions = {
       pixelRatio,
       backgroundColor: currentTheme.bg,
-      skipFonts: true,
+      fontEmbedCSS: LONGFORM_FONT_EMBED_CSS,
+      preferredFontFormat: 'truetype' as const,
       cacheBust: true,
       style: { transform: 'scale(1)', margin: '0', padding: '0' }
     };
@@ -711,7 +857,12 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
     if (shouldRenderCover) {
       const coverEl = document.getElementById('page-cover');
       if (coverEl) {
-        const dataUrl = await toPng(coverEl, captureOptions);
+        let dataUrl = '';
+        try {
+          dataUrl = await captureViaBrowserSnapshot(coverEl, RATIO_MAP[ratio].width, RATIO_MAP[ratio].height);
+        } catch {
+          dataUrl = await toPng(coverEl, captureOptions);
+        }
         rendered.push({ fileName: 'xhs_page_1_cover.png', dataUrl });
       }
     }
@@ -719,7 +870,12 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
     for (let i = 0; i < pages.length; i++) {
       const element = document.getElementById(`page-${i}`);
       if (element) {
-        const dataUrl = await toPng(element, captureOptions);
+        let dataUrl = '';
+        try {
+          dataUrl = await captureViaBrowserSnapshot(element, RATIO_MAP[ratio].width, RATIO_MAP[ratio].height);
+        } catch {
+          dataUrl = await toPng(element, captureOptions);
+        }
         rendered.push({ fileName: `xhs_page_${shouldRenderCover ? i + 2 : i + 1}.png`, dataUrl });
       }
     }
@@ -758,8 +914,8 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
     const handleSave = async (evt: Event) => {
       const event = evt as CustomEvent<{ onSave?: (payload: { title?: string; text?: string; images: string[]; coverImage?: string }) => void; onError?: (msg?: string) => void }>;
       try {
-        // 使用默认高清渲染，保证保存的图片清晰度（与导出一致）
-        const renderedImages = await renderAllPagesToImages(2);
+        // 保存到 works 时使用与预览更接近的渲染倍率，避免字重观感变细
+        const renderedImages = await renderAllPagesToImages(1);
         if (renderedImages.length === 0) {
           event.detail?.onError?.('暂无可保存的图片');
           return;
@@ -987,7 +1143,7 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
                               )}
                             </div>
                             <div className="h-[58%] w-full px-[100px] py-[80px] flex flex-col justify-start overflow-hidden">
-                              <h1 style={{ fontSize: `${fontSize * 2.3}px`, lineHeight: 1.1, fontWeight: 900, color: currentTheme.title, marginBottom: '60px', textAlign: 'left', wordBreak: 'break-all', fontFamily: SONG_FONT_STACK }}>
+                              <h1 style={{ fontSize: `${fontSize * 2.3}px`, lineHeight: 1.1, fontWeight: 900, color: currentTheme.title, marginBottom: '60px', textAlign: 'left', wordBreak: 'break-all', fontFamily: TITLE_FONT_STACK }}>
                                 {title || coverData?.title || '未命名标题'}
                               </h1>
                               <div style={{ maxHeight: '400px', overflow: 'hidden' }}>
@@ -1034,11 +1190,19 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
                           style={{ width: `${RATIO_MAP[ratio].width * 0.45}px`, height: `${RATIO_MAP[ratio].height * 0.45}px` }}
                         >
                           <div id={`page-${index}`} style={{ width: `${RATIO_MAP[ratio].width}px`, height: `${RATIO_MAP[ratio].height}px`, backgroundColor: currentTheme.bg, transform: 'scale(0.45)', transformOrigin: 'top left', display: 'flex', flexDirection: 'column', position: 'relative' }}>
-                            <div className="flex-1 px-[100px] py-[100px]">
+                            <div
+                              className="flex-1"
+                              style={{
+                                paddingLeft: `${contentInsets.side}px`,
+                                paddingRight: `${contentInsets.side}px`,
+                                paddingTop: `${contentInsets.top}px`,
+                                paddingBottom: `${contentInsets.bottom}px`,
+                              }}
+                            >
                               {isMinimalTemplate && index === 0 && minimalInlineTitle && (
                                 <div style={{ marginBottom: '52px' }}>
                                   <div style={{ height: '2px', width: '100%', background: minimalTopLineColor, borderRadius: '9999px', marginBottom: '34px' }} />
-                                  <h1 style={{ fontSize: `${fontSize * 2.3}px`, lineHeight: 1.1, fontWeight: 900, color: currentTheme.title, margin: 0, textAlign: 'left', wordBreak: 'break-all', fontFamily: SONG_FONT_STACK }}>
+                                  <h1 style={{ fontSize: `${fontSize * 2.55}px`, lineHeight: 1.1, fontWeight: 900, color: currentTheme.title, margin: 0, textAlign: 'left', wordBreak: 'break-all', fontFamily: TITLE_FONT_STACK }}>
                                     {Array.from(minimalInlineTitle).map((char, charIdx) => {
                                       if (char === '\n') return <br key={`minimal-title-br-${charIdx}`} />;
                                       if (char === ' ') {
@@ -1071,7 +1235,7 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
                                   borderLeft: block.type === 'quote' ? `10px solid ${currentTheme.quoteBorder}` : 'none',
                                   paddingLeft: block.type === 'quote' ? '40px' : '0',
                                   textAlign: 'justify',
-                                  fontFamily: SONG_FONT_STACK
+                                  fontFamily: block.type === 'title' ? TITLE_FONT_STACK : SONG_FONT_STACK
                                 }}>
                                   {renderRichText(block.text)}
                                 </div>

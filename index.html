@@ -33,8 +33,142 @@
     </script>
     <!-- Inter Font for that clean, professional look -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Song-style font with heavier weights for long image generation -->
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;600;700;900&display=swap" rel="stylesheet">
+    <!-- Song-style font for long image preview/export consistency -->
+    <style>
+      @font-face {
+        font-family: 'FZXiaoBiaoSong';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('/fonts/FZXiaoBiaoSongJian.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'SourceHanSerifCNHeavy';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('/fonts/SourceHanSerifCN-Heavy.otf') format('opentype');
+      }
+      @font-face {
+        font-family: 'SourceHanSerifCNHeavy';
+        font-style: normal;
+        font-weight: 500;
+        font-display: swap;
+        src: url('/fonts/SourceHanSerifCN-Heavy.otf') format('opentype');
+      }
+      @font-face {
+        font-family: 'SourceHanSerifCNHeavy';
+        font-style: normal;
+        font-weight: 600;
+        font-display: swap;
+        src: url('/fonts/SourceHanSerifCN-Heavy.otf') format('opentype');
+      }
+      @font-face {
+        font-family: 'SourceHanSerifCNHeavy';
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: url('/fonts/SourceHanSerifCN-Heavy.otf') format('opentype');
+      }
+      @font-face {
+        font-family: 'SourceHanSerifCNHeavy';
+        font-style: normal;
+        font-weight: 900;
+        font-display: swap;
+        src: url('/fonts/SourceHanSerifCN-Heavy.otf') format('opentype');
+      }
+      @font-face {
+        font-family: 'FZXiaoBiaoSongGBK';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('/fonts/FZXiaoBiaoSongGBK.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'FZXiaoBiaoSongGBK';
+        font-style: normal;
+        font-weight: 500;
+        font-display: swap;
+        src: url('/fonts/FZXiaoBiaoSongGBK.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'FZXiaoBiaoSongGBK';
+        font-style: normal;
+        font-weight: 600;
+        font-display: swap;
+        src: url('/fonts/FZXiaoBiaoSongGBK.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'FZXiaoBiaoSongGBK';
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: url('/fonts/FZXiaoBiaoSongGBK.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'FZXiaoBiaoSongGBK';
+        font-style: normal;
+        font-weight: 900;
+        font-display: swap;
+        src: url('/fonts/FZXiaoBiaoSongGBK.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'FZXiaoBiaoSong';
+        font-style: normal;
+        font-weight: 500;
+        font-display: swap;
+        src: url('/fonts/FZXiaoBiaoSongJian.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'FZXiaoBiaoSong';
+        font-style: normal;
+        font-weight: 600;
+        font-display: swap;
+        src: url('/fonts/FZXiaoBiaoSongJian.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'FZXiaoBiaoSong';
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: url('/fonts/FZXiaoBiaoSongJian.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'FZXiaoBiaoSong';
+        font-style: normal;
+        font-weight: 900;
+        font-display: swap;
+        src: url('/fonts/FZXiaoBiaoSongJian.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'Noto Serif SC';
+        font-style: normal;
+        font-weight: 500;
+        font-display: swap;
+        src: url(https://fonts.gstatic.com/s/notoserifsc/v35/H4cyBXePl9DZ0Xe7gG9cyOj7uK2-n-D2rd4FY7SwqyWv.ttf) format('truetype');
+      }
+      @font-face {
+        font-family: 'Noto Serif SC';
+        font-style: normal;
+        font-weight: 600;
+        font-display: swap;
+        src: url(https://fonts.gstatic.com/s/notoserifsc/v35/H4cyBXePl9DZ0Xe7gG9cyOj7uK2-n-D2rd4FY7RcrCWv.ttf) format('truetype');
+      }
+      @font-face {
+        font-family: 'Noto Serif SC';
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: url(https://fonts.gstatic.com/s/notoserifsc/v35/H4cyBXePl9DZ0Xe7gG9cyOj7uK2-n-D2rd4FY7RlrCWv.ttf) format('truetype');
+      }
+      @font-face {
+        font-family: 'Noto Serif SC';
+        font-style: normal;
+        font-weight: 900;
+        font-display: swap;
+        src: url(https://fonts.gstatic.com/s/notoserifsc/v35/H4cyBXePl9DZ0Xe7gG9cyOj7uK2-n-D2rd4FY7QrrCWv.ttf) format('truetype');
+      }
+    </style>
     <style>
       body {
         font-family: 'Inter', sans-serif;

@@ -2,6 +2,12 @@ import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
+let cachedBrowser: any = null;
+const EDGE_PATHS = [
+  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+];
+
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
@@ -93,6 +99,71 @@ export default defineConfig(({ mode }) => {
                 res.statusCode = 500;
                 res.setHeader('Content-Type', 'application/json');
                 res.end(JSON.stringify({ message: error?.message || 'Upload failed' }));
+              }
+            });
+
+            server.middlewares.use('/local-browser-snapshot', async (req, res) => {
+              if (req.method !== 'POST') {
+                res.statusCode = 405;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ message: 'Method Not Allowed' }));
+                return;
+              }
+
+              try {
+                const body = await new Promise<string>((resolve, reject) => {
+                  let raw = '';
+                  req.on('data', (chunk) => { raw += chunk; });
+                  req.on('end', () => resolve(raw));
+                  req.on('error', reject);
+                });
+                const parsed = JSON.parse(body || '{}');
+                const html = String(parsed?.html || '');
+                const width = Number(parsed?.width || 1080);
+                const height = Number(parsed?.height || 1440);
+                const backgroundColor = String(parsed?.backgroundColor || '#ffffff');
+                const fontCss = String(parsed?.fontCss || '');
+
+                if (!html) {
+                  res.statusCode = 400;
+                  res.setHeader('Content-Type', 'application/json');
+                  res.end(JSON.stringify({ message: 'Missing html' }));
+                  return;
+                }
+
+                const { chromium } = await import('playwright-core');
+
+                if (!cachedBrowser || !cachedBrowser.isConnected()) {
+                  const fs = await import('fs');
+                  const edgePath = EDGE_PATHS.find((p) => fs.existsSync(p));
+                  if (!edgePath) throw new Error('未找到系统 Edge 浏览器，无法执行浏览器截图');
+                  cachedBrowser = await chromium.launch({
+                    headless: true,
+                    executablePath: edgePath,
+                    args: ['--disable-gpu', '--font-render-hinting=none'],
+                  });
+                }
+
+                const page = await cachedBrowser.newPage({
+                  viewport: { width, height },
+                  deviceScaleFactor: 1,
+                });
+
+                await page.setContent(
+                  `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;background:${backgroundColor};}*{box-sizing:border-box;}${fontCss}</style></head><body>${html}</body></html>`,
+                  { waitUntil: 'networkidle' }
+                );
+                await page.waitForTimeout(80);
+                const png = await page.screenshot({ fullPage: false, type: 'png' });
+                await page.close();
+
+                res.statusCode = 200;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ dataUrl: `data:image/png;base64,${png.toString('base64')}` }));
+              } catch (error: any) {
+                res.statusCode = 500;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ message: error?.message || 'Browser snapshot failed' }));
               }
             });
           },
