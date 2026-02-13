@@ -1976,8 +1976,8 @@ const PublishModal: React.FC<{
           finalBody = finalBody.slice(0, 1000);
           truncated = true;
         }
-        // 确保图片出现在内容中
-        const missingMd = mergedImages.filter(img => !finalBody.includes(img)).map(img => `![image](${img})`);
+        // 确保图片出现在内容中；空 alt 可避免图链失效时正文显示一排 "image"
+        const missingMd = mergedImages.filter(img => !finalBody.includes(img)).map(img => `![](${img})`);
         if (missingMd.length > 0) {
           finalBody = `${finalBody ? `${finalBody}\n\n` : ''}${missingMd.join('\n')}`;
         }
