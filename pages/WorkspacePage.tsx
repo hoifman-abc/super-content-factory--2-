@@ -1,19 +1,20 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import * as ReactDOM from 'react-dom';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import mammoth from 'mammoth';
 
-// React 19 移除了默认导出的 findDOMNode，react-quill 仍在调用它，这里做一次兼容填补。
-// 仅用于获取编辑区域的实际 DOM 节点，不涉及生命周期。
+// React 19 removed the default exported findDOMNode; react-quill still calls it.
+// Provide a lightweight compatibility shim for editor DOM lookup only.
 (ReactDOM as any).findDOMNode = (ReactDOM as any).findDOMNode || ((inst: any) => {
   if (!inst) return null;
   if ((inst as any).current) return (inst as any).current;
   if ((inst as any).nodeType) return inst;
   return null;
 });
-// 兼容 CommonJS default 引用（react-quill 内部用到 react-dom 的 default）
+// Compatibility for CommonJS-style default import used by react-quill internals.
 if (!(ReactDOM as any).default) {
   (ReactDOM as any).default = {
     ...ReactDOM,
@@ -213,25 +214,23 @@ interface Work {
 
 const MOCK_WORKS: Work[] = [
   { id: 'w1', title: 'Steve Jobs Graduation Speech: 3 Counter-Intuitive Life Principles', type: 'Doc', date: '16 hours ago' },
-  { id: 'w2', title: 'Stay Hungry, Stay Foolish — Steve Jobs Stanford Speech', type: 'Doc', date: '16 hours ago' },
+  { id: 'w2', title: 'Stay Hungry, Stay Foolish 鈥?Steve Jobs Stanford Speech', type: 'Doc', date: '16 hours ago' },
   { id: 'w3', title: 'Three things to win at the starting line after the exam', type: 'Slide', date: 'Yesterday' },
   { 
     id: 'w4', 
     title: 'New page', 
     type: 'Page', 
     date: 'Yesterday',
-    content: `那顿饭之后，我开始认真面对“衰老”
+    content: `那顿饭之后，我开始认真面对“变老”这件事。
 
---日更公众号的第88天--
---晚10点半睡，早5点起的第82天--
+-- 日更公众号的第 58 天 --
+-- 晚 10:30 睡，早 7:00 起的第 82 天 --
 
-最近好几次，吃晚饭稍微吃快了一点，多了一点，整个晚上都难受，胃胀，消化不良，也睡不好。
+最近几次，晚饭稍微吃快一点、吃多一点，整个晚上都不太舒服，胃胀、消化慢、睡不好。
 
-以前很少会有这样的感觉，几次以后我突然意识到，我是不是老了？
+以前很少有这种感觉，连续几次后我突然意识到：身体真的在提醒我节奏要变了。
 
-之前之前听别人说，人过了30就开始走下坡路，现在我第一次真实体会到了这种感觉。
-
-我仔细回想，不只是消化能力减弱了，...`
+我开始回头看自己的作息、饮食和工作方式，决定做一些小调整。`
   },
   { id: 'w5', title: 'Welcome to Super Content Factory', type: 'Page', date: 'Yesterday' },
 ];
@@ -252,7 +251,7 @@ interface WechatAccount {
   status?: string;
 }
 
-// 在开发环境走本地代理，避免浏览器直连跨域；生产仍直连真实域名
+// Use local proxy in dev to avoid browser CORS; production uses remote host directly.
 const WECHAT_REMOTE_BASE = 'https://wx.limyai.com/api/openapi';
 const WECHAT_OPENAPI_BASE =
   (import.meta as any)?.env?.DEV ? '/wechat-openapi' : WECHAT_REMOTE_BASE;
@@ -264,33 +263,33 @@ const XHS_PUBLISH_API_KEY = (import.meta as any)?.env?.VITE_XHS_PUBLISH_API_KEY 
 
 const normalizeToRemote = (url: string) => {
   if (url.startsWith('http')) return url;
-  // 将 /wechat-openapi/xx 还原为真实域名路径，避免代理链路二次拼接前缀
+  // Normalize proxied path to remote endpoint path.
   return `${WECHAT_REMOTE_BASE}${url.replace(/^\/wechat-openapi/, '')}`;
 };
 
 const fetchWithProxyFallback = async (url: string, options: RequestInit) => {
   const remoteUrl = normalizeToRemote(url);
-  // 1) 先按原始 URL 请求（dev 走 Vite 代理）
+  // 1) Try original URL first (dev via Vite proxy).
   try {
     const res = await fetch(url, options);
     if (res.ok) return res;
-    // 对于 4xx 参数错误，直接返回原响应，避免无意义的跨域重试
+    // For 4xx parameter errors, return directly and skip fallback retries.
     if (res.status >= 400 && res.status < 500) return res;
-    // 2) 若非 2xx，再直接请求真实域名（绕过 dev 代理 502 的情况）
+    // 2) If non-2xx, try direct remote host.
     if (remoteUrl !== url) {
       const direct = await fetch(remoteUrl, options);
       if (direct.ok) return direct;
-      // 3) 若配置了外部代理，再尝试代理真实域名
+      // 3) If external proxy is configured, try proxied remote URL.
       if (WECHAT_PROXY_URL) {
         const proxied = `${WECHAT_PROXY_URL}${encodeURIComponent(remoteUrl)}`;
         return await fetch(proxied, options);
       }
       return direct;
     }
-    // 4) 没有额外路由可试，直接返回
+    // 4) No additional route to try.
     return res;
   } catch (err) {
-    // 捕获网络错误，尝试外部代理
+    // Network error fallback: use external proxy if configured.
     if (!WECHAT_PROXY_URL) throw err;
     const proxied = `${WECHAT_PROXY_URL}${encodeURIComponent(remoteUrl)}`;
     return await fetch(proxied, options);
@@ -299,7 +298,7 @@ const fetchWithProxyFallback = async (url: string, options: RequestInit) => {
 
 const postWechat = async (path: string, payload: any) => {
   if (!WECHAT_OPENAPI_KEY) {
-    throw new Error('缺少微信开放平台 API Key');
+    throw new Error('Missing WeChat OpenAPI key');
   }
 
   const url = `${WECHAT_OPENAPI_BASE}${path}`;
@@ -314,7 +313,7 @@ const postWechat = async (path: string, payload: any) => {
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data?.success === false) {
-    const message = data?.error || data?.message || res.statusText || '请求失败';
+    const message = data?.error || data?.message || res.statusText || 'Request failed';
     const code = data?.code;
     throw new Error(code ? `${code}: ${message}` : message);
   }
@@ -329,7 +328,7 @@ const uploadDataImageToPublicUrl = async (dataUrl: string): Promise<string> => {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data?.url) {
-    throw new Error(data?.message || '图片上传失败');
+    throw new Error(data?.message || 'Image upload failed');
   }
   return String(data.url);
 };
@@ -349,7 +348,7 @@ const fetchWechatAccounts = async (): Promise<WechatAccount[]> => {
     const data = await postWechat('/wechat-accounts', {});
     return data?.data?.accounts || [];
   } catch (err) {
-    // 开发环境兜底：接口跨域/502 时返回空数组，避免阻塞 UI（生产仍抛错）
+    // Dev fallback for CORS/502: return empty list to avoid blocking UI.
     if ((import.meta as any)?.env?.DEV) {
       console.warn('fetchWechatAccounts fallback (dev only):', err);
       return [];
@@ -369,7 +368,7 @@ type PublishXhsPayload = {
 
 const publishXhsNote = async (payload: PublishXhsPayload, idempotencyKey?: string) => {
   if (!XHS_PUBLISH_API_KEY) {
-    throw new Error('缺少小红书发布 API Key');
+    throw new Error('Missing Xiaohongshu publish API key');
   }
 
   const headers: Record<string, string> = {
@@ -388,7 +387,7 @@ const publishXhsNote = async (payload: PublishXhsPayload, idempotencyKey?: strin
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data?.success === false) {
-    const message = data?.error || data?.message || res.statusText || '请求失败';
+    const message = data?.error || data?.message || res.statusText || 'Request failed';
     const code = data?.code;
     throw new Error(code ? `${code}: ${message}` : message);
   }
@@ -481,7 +480,7 @@ const detectWechatFormatHints = async (text: string): Promise<{ hints: WechatFor
     '你是公众号文章排版助手。',
     '从正文中识别需要重点强调的词组，分为红色加粗(redBold)与仅加粗(boldOnly)。',
     '红色加粗必须是短语或短句，禁止整段或整句。',
-    '不要选择以下词：原创、乔巧老师、你的面试陪跑员。',
+    '不要选择以下词：原创、乔琪老师、你的面试陪跑员。',
     '返回严格 JSON，不要解释：',
     '{"redBold":["..."],"boldOnly":["..."]}',
     '要求：redBold 6-12 个，boldOnly 8-16 个，尽量直接来自原文。',
@@ -515,17 +514,17 @@ const formatWechatArticleHtml = (plainText: string, hints: WechatFormatHints, im
 
   const bannedPhrases = [
     '原创',
-    '乔巧老师',
+    '乔琪老师',
     '（你的面试陪跑员）',
     '(你的面试陪跑员)',
   ].map(escapeHtml);
 
   const forcedHighlights = [
-    '我自己原创的《2026公考面试一本通3.0》，全文3万2千字',
-    '我自己原创的《2026公考面试一本通3.0》，全文3万2千字，这里面总结了我多年的教学心得',
+    '我自己原创的《2026公考面试一本通2.0》，全文3万字',
+    '我自己原创的《2026公考面试一本通2.0》，全文3万字，这里面总结了我多年的教学心得',
   ];
 
-  const ordinalTokenRegex = /第[一二三四五六七八九十]+[、.．:]/g;
+  const ordinalTokenRegex = /第[一二三四五六七八九十\d]+[、.．)）]/g;
   const highlightOrdinalSegments = (line: string) => {
     const matches = Array.from(line.matchAll(ordinalTokenRegex));
     if (matches.length === 0) return line;
@@ -556,7 +555,7 @@ const formatWechatArticleHtml = (plainText: string, hints: WechatFormatHints, im
   const quotePatterns = [
     /“[^”]{1,120}”/g,
     /「[^」]{1,120}」/g,
-    /《[^》]{1,120}》/g,
+    /『[^』]{1,120}』/g,
     /&quot;[^&]{1,120}&quot;/g,
   ];
   quotePatterns.forEach((pattern) => {
@@ -598,7 +597,7 @@ const formatWechatArticleHtml = (plainText: string, hints: WechatFormatHints, im
     buffer = [];
   };
   const splitLongLine = (line: string) => {
-    const parts = line.split(/([。！？!?])+/);
+    const parts = line.split(/([。！？?])/);
     const output: string[] = [];
     for (let i = 0; i < parts.length; i += 2) {
       const sentence = (parts[i] || '') + (parts[i + 1] || '');
@@ -630,7 +629,7 @@ const formatWechatArticleHtml = (plainText: string, hints: WechatFormatHints, im
   // Enforce consistent spacing: split by newline first, then split each line by sentence punctuation.
   paragraphs.length = 0;
   const splitIntoSentenceChunks = (line: string) => {
-    const chunks = line.match(/[^。！？?!；;]+[。！？?!；;]?/g) || [];
+    const chunks = line.match(/[^。！？?!]+[。！？?!]?/g) || [];
     return chunks
       .map(chunk => chunk.trim())
       .filter(Boolean);
@@ -726,8 +725,8 @@ const CREATION_TEMPLATES: Template[] = [
   },
   { 
     id: 't-longform-image', 
-    title: '长图文生成', 
-    description: '根据选中资料生成长图文，内置 3:4 / 16:9 / 1:1 默认尺寸，模板位预留待接入。', 
+    title: '长图文生成',
+    description: '根据选中资料生成长图文，内置 3:4 / 16:9 / 1:1 默认尺寸，模板位预留待接入。',
     icon: <LayoutIcon className="w-5 h-5 text-emerald-600" />,
     color: 'border-l-4 border-l-emerald-400',
     tag: 'Image',
@@ -1137,11 +1136,13 @@ const OPENROUTER_SITE_URL = import.meta.env.VITE_OPENROUTER_SITE_URL || (typeof 
 // Default to a currently-listed Gemini model on OpenRouter to avoid 400s from deprecated IDs
 const OPENROUTER_FALLBACK_MODEL = import.meta.env.VITE_OPENROUTER_MODEL || 'google/gemini-2.5-flash';
 
-// 1) 内置少量常用映射；2) 支持通过 env 为任意模型覆盖：VITE_OPENROUTER_MODEL_MAP__<MODEL_ID_IN_UPPERCASE_WITH_UNDERSCORES>
+// Built-in common model map; can be overridden by env keys:
+// VITE_OPENROUTER_MODEL_MAP__<MODEL_ID_IN_UPPERCASE_WITH_UNDERSCORES>
 const OPENROUTER_MODEL_MAP: Record<string, string> = {
   'gemini-2.5-flash': 'google/gemini-2.5-flash',
   'gemini-2.5-pro': 'google/gemini-2.5-pro',
-  // 如果你有 Gemini 3 Pro 权限，在 .env.local 设置 VITE_OPENROUTER_GEMINI3_ID 或 VITE_OPENROUTER_MODEL_MAP__GEMINI_3_PRO
+  // If you have Gemini 3 Pro access, set VITE_OPENROUTER_GEMINI3_ID
+  // or VITE_OPENROUTER_MODEL_MAP__GEMINI_3_PRO in .env.local
   'gemini-3-pro': import.meta.env.VITE_OPENROUTER_GEMINI3_ID || 'google/gemini-3-pro-preview',
   // OpenAI
   'gpt-4o': 'openai/gpt-4o',
@@ -1165,13 +1166,24 @@ const resolveOpenRouterModel = (selectedModelId: string) => {
   return selectedModelId; // assume caller already passed a valid OpenRouter model id
 };
 
+type ChatMessageContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+  | { type: 'video_url'; video_url: { url: string } }
+  | { type: 'file'; file: { filename: string; file_data: string } };
+
+type ChatMessagePayload = {
+  role: string;
+  content: string | ChatMessageContentPart[];
+};
+
 const callOpenRouterChat = async (
-  messages: { role: string; content: string }[],
+  messages: ChatMessagePayload[],
   modelId: string
 ): Promise<string> => {
   const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY;
   if (!apiKey) {
-    throw new Error('缺少 OpenRouter Key，请在 .env.local 设置 VITE_OPENROUTER_API_KEY');
+    throw new Error('Missing OpenRouter API key. Please set VITE_OPENROUTER_API_KEY in .env.local.');
   }
 
   const resolvedModel = resolveOpenRouterModel(modelId);
@@ -1182,7 +1194,7 @@ const callOpenRouterChat = async (
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
-      // OpenRouter 推荐的标识头，方便在仪表盘里看到来源
+      // Recommended OpenRouter attribution headers
       'HTTP-Referer': OPENROUTER_SITE_URL,
       'X-Title': 'Super Content Factory'
     },
@@ -1194,13 +1206,36 @@ const callOpenRouterChat = async (
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`OpenRouter 接口错误 ${response.status}: ${errorText}`);
+    let parsedMessage = '';
+    try {
+      const parsed = JSON.parse(errorText);
+      parsedMessage =
+        parsed?.error?.message ||
+        parsed?.message ||
+        '';
+    } catch {
+      parsedMessage = '';
+    }
+
+    if (response.status === 402) {
+      throw new Error(
+        `OpenRouter billing error: insufficient credits or paid-model access required. Please top up or switch to an available free model.${parsedMessage ? ` (${parsedMessage})` : ''}`
+      );
+    }
+    if (response.status === 401) {
+      throw new Error(`OpenRouter auth failed. Check VITE_OPENROUTER_API_KEY in .env.local.${parsedMessage ? ` (${parsedMessage})` : ''}`);
+    }
+    if (response.status === 429) {
+      throw new Error(`OpenRouter rate limited the request. Please retry later or switch model.${parsedMessage ? ` (${parsedMessage})` : ''}`);
+    }
+
+    throw new Error(`OpenRouter API error ${response.status}: ${parsedMessage || errorText}`);
   }
 
   const data = await response.json();
   const content = data?.choices?.[0]?.message?.content;
   if (!content) {
-    throw new Error('OpenRouter 没有返回内容');
+    throw new Error('OpenRouter returned an empty response.');
   }
   return content.trim();
 };
@@ -1950,7 +1985,7 @@ const PublishModal: React.FC<{
 
       if (wechatType === 'greenbook') {
         if (!mergedImages || mergedImages.length === 0) {
-          setSubmitError('小绿书至少需要1张图片');
+          setSubmitError('小绿书至少需要 1 张图片');
           return;
         }
         const convertedImages: string[] = [];
@@ -1968,7 +2003,7 @@ const PublishModal: React.FC<{
           return;
         }
 
-        // 覆盖为可发布图片列表，后续封面和正文注图都基于该列表
+        // Replace with publishable image list; cover/body image logic uses this list.
         mergedImages.length = 0;
         uniqueConvertedImages.forEach((img) => mergedImages.push(img));
 
@@ -1976,7 +2011,7 @@ const PublishModal: React.FC<{
           finalBody = finalBody.slice(0, 1000);
           truncated = true;
         }
-        // 确保图片出现在内容中；空 alt 可避免图链失效时正文显示一排 "image"
+        // Ensure images are referenced in body content.
         const missingMd = mergedImages.filter(img => !finalBody.includes(img)).map(img => `![](${img})`);
         if (missingMd.length > 0) {
           finalBody = `${finalBody ? `${finalBody}\n\n` : ''}${missingMd.join('\n')}`;
@@ -1996,10 +2031,10 @@ const PublishModal: React.FC<{
         if (!coverImageToUse && normalizedImages.length > 0) {
           coverImageToUse = normalizedImages[0];
         }
-        // 后端 cover_image 列长度有限，超长链接不写入 cover_image，改由 mainImages 承载
+        // Backend has cover_image length limit; if too long, rely on mainImages.
         if (coverImageToUse && coverImageToUse.length > 240) {
           coverImageToUse = undefined;
-          setNotice(prev => prev ? prev : '封面图过长，已自动改用主图列表发布（不写入封面字段）');
+          setNotice(prev => prev ? prev : '封面图过长，已自动改用主图列表发布（不写入 cover_image）');
         }
         if (!coverImageToUse && normalizedImages.length > 0) {
           coverImageToUse = normalizedImages[0];
@@ -2007,7 +2042,7 @@ const PublishModal: React.FC<{
       } else {
         if (coverImageToUse?.startsWith('data:')) {
           coverImageToUse = undefined;
-          setNotice(prev => prev ? prev : '封面为 data URL，已忽略以避免过长导致发布失败');
+          setNotice(prev => prev ? prev : '封面是 data URL，已忽略以避免过长导致发布失败');
         } else if (coverImageToUse && coverImageToUse.length > 240) {
           coverImageToUse = undefined;
           setNotice(prev => prev ? prev : '封面链接过长，已忽略以避免发布失败');
@@ -2031,7 +2066,7 @@ const PublishModal: React.FC<{
       try {
         await publishWechatArticle(payload);
         if (truncated) {
-          setNotice('正文超过1000字，已自动截断后发布');
+          setNotice('正文超过 1000 字，已自动截断后发布');
         }
         alert('发布成功，已提交到公众号草稿箱');
         onPublished?.({ platform: 'wechat', wechatAppid, articleType, truncated });
@@ -2157,7 +2192,7 @@ const PublishModal: React.FC<{
                       </option>
                     ))}
                   </select>
-                  {accountsLoading && <p className="text-[11px] text-gray-400 mt-1">加载公众号列表...</p>}
+                  {accountsLoading && <p className="text-[11px] text-gray-400 mt-1">加载公众号列表中...</p>}
                   {accountsError && (
                     <div className="text-[11px] text-red-500 mt-1">
                       {accountsError} <button className="underline" onClick={() => { setAccounts([]); setAccountsLoading(false); setAccountsError(null); }}>重试</button>
@@ -2188,7 +2223,7 @@ const PublishModal: React.FC<{
           {platform === 'xiaohongshu' && (
             <div className="space-y-3">
               <div className="p-3 rounded-lg bg-red-50 border border-red-100 text-sm text-red-700">
-                发布将扣除 1 积分；建议填写幂等键避免重复扣费，接口返回的发布链接会用于生成扫码二维码。
+                发布将扣除 1 积分；建议填写幂等键避免重复扣费，接口返回的发布链接将用于生成扫码二维码。
               </div>
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
@@ -2291,7 +2326,7 @@ const PublishModal: React.FC<{
 
         <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between bg-gray-50/50">
           <div className="text-xs text-gray-500">
-            {notice || (platform === 'wechat' ? '发布到公众号草稿箱（API已接入）。' : '发布到小红书并生成扫码二维码（每次扣除 1 积分）。')}
+            {notice || (platform === 'wechat' ? '发布到公众号草稿箱（API 已接入）。' : '发布到小红书并生成扫码二维码（每次扣除 1 积分）。')}
             {submitError && <span className="text-red-500 ml-2">{submitError}</span>}
           </div>
           <div className="flex gap-3">
@@ -2322,7 +2357,7 @@ const PublishResultModal: React.FC<{ result: PublishInfo & { platform: 'xiaohong
       <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl p-6 space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-[11px] uppercase tracking-wide text-gray-400">发布成功 · 小红书</p>
+            <p className="text-[11px] uppercase tracking-wide text-gray-400">发布成功 / 小红书</p>
             <h3 className="text-lg font-bold text-gray-900">扫码在手机端查看</h3>
           </div>
           <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg">
@@ -2384,18 +2419,20 @@ const ChatReferencePicker: React.FC<ChatReferencePickerProps> = ({ projects, wor
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      const localItem: LocalFileItem = {
-         id: `local-${Date.now()}`,
-         type: 'local-file',
-         title: file.name,
-         file: file
-      };
-      onToggle(localItem);
-      // We don't close automatically for multiple selections, but for file upload maybe we want to keep it open?
-      // User can close manually.
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) {
+      files.forEach((file, index) => {
+        const localItem: LocalFileItem = {
+          id: `local-${Date.now()}-${index}`,
+          type: 'local-file',
+          title: file.name,
+          file
+        };
+        onToggle(localItem);
+      });
     }
+    // Allow selecting the same file again in the next open.
+    e.target.value = '';
   };
 
   return (
@@ -2515,10 +2552,10 @@ const ChatReferencePicker: React.FC<ChatReferencePickerProps> = ({ projects, wor
                    <span className="text-sm font-medium text-gray-600">Click to upload file</span>
                    <span className="text-xs text-gray-400 mt-1">PDF, DOCX, TXT, IMG</span>
                 </div>
-                <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} />
-             </div>
-          )}
-       </div>
+                <input type="file" multiple ref={fileInputRef} className="hidden" onChange={handleFileChange} />
+              </div>
+           )}
+        </div>
     </div>
   );
 };
@@ -2709,7 +2746,7 @@ const ContentRenderer: React.FC<{ item: ProjectItem | Material; isEditing: boole
              <input
                value={editTitle}
                onChange={(e) => onTitleChange(e.target.value)}
-               placeholder="给笔记起个标题吧"
+               placeholder="给笔记起个标题"
                className="w-full bg-white text-3xl font-bold text-gray-900 placeholder:text-gray-300 outline-none border border-gray-100 rounded-xl px-4 py-3 shadow-sm focus:border-gray-300"
              />
 
@@ -3320,7 +3357,7 @@ const ProjectDetailView: React.FC<{
       setShowLongformTool(true);
       return;
     }
-    // TODO: hook up other模板的生成逻辑（当前保持占位）
+    // TODO: hook up generation flow for other templates (placeholder for now).
   };
 
   const handleSaveLongformWork = () => {
@@ -3377,55 +3414,362 @@ const ProjectDetailView: React.FC<{
     setChatReferences(prev => prev.filter(i => i.id !== id));
   };
 
-  // 将卡片对应的内容整理为可发给模型的文本/文件（前端不变，只是在发送时打包）
-  const readFileAsBase64 = (file: File): Promise<string> => {
+  const readFileAsDataUrl = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
-        const result = reader.result as string;
-        const base64 = result.includes(',') ? result.split(',')[1] : result;
-        resolve(base64);
+        resolve(reader.result as string);
       };
       reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
       reader.readAsDataURL(file);
     });
   };
 
-  const buildAttachmentText = async (
+  const readFileAsText = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+      reader.readAsText(file, 'utf-8');
+    });
+  };
+
+  const readFileAsArrayBuffer = (file: File): Promise<ArrayBuffer> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as ArrayBuffer);
+      reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+      reader.readAsArrayBuffer(file);
+    });
+  };
+
+  const normalizeExtractedText = (text: string) => {
+    return String(text || '')
+      .replace(/\u0000/g, '')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  };
+
+  const ocrPdfPageText = async (page: any): Promise<string> => {
+    if (typeof document === 'undefined') return '';
+    const viewport = page.getViewport({ scale: 2 });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return '';
+
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    const imageDataUrl = canvas.toDataURL('image/png');
+
+    const { recognize } = await import('tesseract.js');
+    try {
+      const result = await recognize(imageDataUrl, 'chi_sim+eng', {
+        logger: () => {},
+      });
+      return normalizeExtractedText(result?.data?.text || '');
+    } catch {
+      // Fallback to English OCR only when Chinese model download is unavailable.
+      const fallback = await recognize(imageDataUrl, 'eng', { logger: () => {} });
+      return normalizeExtractedText(fallback?.data?.text || '');
+    }
+  };
+
+  const extractPdfText = async (file: File): Promise<string> => {
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    const buffer = await readFileAsArrayBuffer(file);
+    const loadingTask = (pdfjs as any).getDocument({
+      data: buffer,
+      disableWorker: true,
+    });
+    const pdf = await loadingTask.promise;
+    const pages: string[] = [];
+    const ocrCandidates: number[] = [];
+    for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
+      const page = await pdf.getPage(pageNo);
+      const textContent = await page.getTextContent();
+      const text = normalizeExtractedText((textContent.items || [])
+        .map((item: any) => String(item?.str || ''))
+        .join(' '));
+      pages.push(text);
+      if (!text || text.length < 20) {
+        ocrCandidates.push(pageNo);
+      }
+    }
+
+    let combined = normalizeExtractedText(pages.filter(Boolean).join('\n'));
+    const needsOcrFallback = combined.length < 120 || ocrCandidates.length > 0;
+    if (!needsOcrFallback) return combined;
+
+    const OCR_MAX_PAGES = 5;
+    const targets = ocrCandidates.slice(0, OCR_MAX_PAGES);
+    const ocrTexts: string[] = [];
+    for (const pageNo of targets) {
+      try {
+        const page = await pdf.getPage(pageNo);
+        const ocrText = await ocrPdfPageText(page);
+        if (ocrText) {
+          ocrTexts.push(`[OCR Page ${pageNo}]\n${ocrText}`);
+        }
+      } catch (err) {
+        console.warn('PDF OCR failed on page', pageNo, err);
+      }
+    }
+
+    if (ocrTexts.length > 0) {
+      combined = normalizeExtractedText(`${combined}\n\n${ocrTexts.join('\n\n')}`);
+    }
+    return combined;
+  };
+
+  const extractDocxText = async (file: File): Promise<string> => {
+    const buffer = await readFileAsArrayBuffer(file);
+    const result = await mammoth.extractRawText({ arrayBuffer: buffer });
+    return String(result?.value || '');
+  };
+
+  const extractLocalFileTextForPrompt = async (file: File): Promise<string> => {
+    const name = (file.name || '').toLowerCase();
+    const mime = (file.type || '').toLowerCase();
+    try {
+      if (
+        mime.startsWith('text/') ||
+        mime === 'application/json' ||
+        mime === 'application/xml' ||
+        mime === 'application/javascript' ||
+        /\.(txt|md|markdown|json|xml|csv|log|js|ts|tsx|jsx|py|java|go|rs|c|cpp|h|hpp|css|html|sql)$/i.test(name)
+      ) {
+        return await readFileAsText(file);
+      }
+      if (mime === 'application/pdf' || /\.pdf$/i.test(name)) {
+        return await extractPdfText(file);
+      }
+      if (
+        mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        /\.docx$/i.test(name)
+      ) {
+        return await extractDocxText(file);
+      }
+    } catch (err) {
+      console.warn('Failed to extract text from local file:', file.name, err);
+    }
+    return '';
+  };
+
+  const isDocxFile = (file: File) => {
+    const name = (file.name || '').toLowerCase();
+    const mime = (file.type || '').toLowerCase();
+    return (
+      mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+      /\.docx$/i.test(name)
+    );
+  };
+
+  const splitTextIntoChunks = (text: string, chunkSize: number) => {
+    const normalized = normalizeExtractedText(text);
+    if (!normalized) return [];
+    const blocks = normalized.split(/\n{2,}/).filter(Boolean);
+    const chunks: string[] = [];
+    let current = '';
+
+    for (const block of blocks) {
+      if (block.length > chunkSize) {
+        if (current) {
+          chunks.push(current);
+          current = '';
+        }
+        for (let i = 0; i < block.length; i += chunkSize) {
+          chunks.push(block.slice(i, i + chunkSize));
+        }
+        continue;
+      }
+      const candidate = current ? `${current}\n\n${block}` : block;
+      if (candidate.length <= chunkSize) {
+        current = candidate;
+      } else {
+        chunks.push(current);
+        current = block;
+      }
+    }
+
+    if (current) chunks.push(current);
+    return chunks;
+  };
+
+  const buildAttachmentMessage = async (
+    refs: (ProjectItem | Work | LocalFileItem | Material | TextSelectionItem)[]
+  ): Promise<ChatMessagePayload | null> => {
+    if (!refs || refs.length === 0) return null;
+
+    const MAX_TOTAL_TEXT = 12000;
+    const MAX_TEXT_PER_ITEM = 2000;
+    const MAX_MEDIA_PARTS = 10;
+    const MAX_INLINE_FILE_BYTES = 4 * 1024 * 1024; // 4 MB
+    const DOCX_MAX_CHARS = 180000;
+    const DOCX_CHUNK_SIZE = 6000;
+    const parts: ChatMessageContentPart[] = [];
+    const summaryLines: string[] = [];
+    let mediaParts = 0;
+    let textBudget = MAX_TOTAL_TEXT;
+
+    const canUseHttpUrl = (url?: string) => !!url && /^https?:\/\//i.test(url);
+    const isProbablyTextFile = (file: File) => {
+      const name = (file.name || '').toLowerCase();
+      return (
+        file.type.startsWith('text/') ||
+        file.type === 'application/json' ||
+        file.type === 'application/xml' ||
+        file.type === 'application/javascript' ||
+        /\.(txt|md|markdown|json|xml|csv|log|js|ts|tsx|jsx|py|java|go|rs|c|cpp|h|hpp|css|html|sql)$/i.test(name)
+      );
+    };
+    const addText = (label: string, raw?: string) => {
+      const text = String(raw || '').trim();
+      if (!text || textBudget <= 0) return;
+      const slice = text.slice(0, Math.min(MAX_TEXT_PER_ITEM, textBudget));
+      summaryLines.push(`${label}\n${slice}`);
+      textBudget -= slice.length;
+    };
+
+    for (const ref of refs) {
+      const refAny: any = ref;
+      const refType = refAny.type || 'unknown';
+      const refTitle = refAny.title || refAny.name || 'Untitled';
+      summaryLines.push(`- [${refType}] ${refTitle}`);
+
+      if (refType === 'local-file' && (ref as LocalFileItem).file) {
+        const file = (ref as LocalFileItem).file;
+        const isDocx = isDocxFile(file);
+        if (file.size > MAX_INLINE_FILE_BYTES) {
+          summaryLines.push(`  (跳过内联：${file.name} 大小 ${(file.size / 1024 / 1024).toFixed(1)}MB，超过 4MB 限制)`);
+          continue;
+        }
+
+        const dataUrl = await readFileAsDataUrl(file);
+        const extractedText = await extractLocalFileTextForPrompt(file);
+        if (isDocx) {
+          if (!extractedText) {
+            summaryLines.push(`  (docx 提取失败：${file.name})`);
+            continue;
+          }
+          const normalized = normalizeExtractedText(extractedText);
+          const trimmed = normalized.slice(0, DOCX_MAX_CHARS);
+          const chunks = splitTextIntoChunks(trimmed, DOCX_CHUNK_SIZE);
+          const wasTruncated = normalized.length > DOCX_MAX_CHARS;
+          summaryLines.push(
+            `  (docx 已提取${normalized.length}字符，按 ${chunks.length} 段发送${wasTruncated ? `；为避免超长，已截断到前 ${DOCX_MAX_CHARS} 字符` : ''})`
+          );
+          chunks.forEach((chunk, idx) => {
+            parts.push({
+              type: 'text',
+              text: `[DOCX ${file.name}] chunk ${idx + 1}/${chunks.length}\n${chunk}`
+            });
+          });
+          // Skip native file attachment for docx to avoid format incompatibility fallback.
+          continue;
+        }
+
+        if (extractedText) {
+          addText(`[local-file] ${file.name}`, extractedText);
+        }
+        if (file.type.startsWith('image/')) {
+          if (mediaParts < MAX_MEDIA_PARTS) {
+            parts.push({ type: 'image_url', image_url: { url: dataUrl } });
+            mediaParts += 1;
+          }
+          continue;
+        }
+
+        if (isProbablyTextFile(file) && !extractedText) {
+          try {
+            const text = await readFileAsText(file);
+            addText(`[local-file] ${file.name}`, text);
+          } catch {
+            summaryLines.push(`  (无法读取文本内容：${file.name})`);
+          }
+        }
+
+        // For non-image local files, always try native file attachment first.
+        // If the model rejects this format, sender will auto-fallback to text summary.
+        parts.push({
+          type: 'file',
+          file: {
+            filename: file.name,
+            file_data: dataUrl
+          }
+        });
+
+        if (!isProbablyTextFile(file)) {
+          summaryLines.push(`  (已附带二进制文件：${file.name}, ${file.type || 'application/octet-stream'}, ${Math.round(file.size / 1024)}KB)`);
+        }
+        continue;
+      }
+
+      addText(`[${refType}] ${refTitle}`, refAny.content || refAny.preview);
+
+      if (mediaParts < MAX_MEDIA_PARTS && canUseHttpUrl(refAny.imageUrl)) {
+        parts.push({ type: 'image_url', image_url: { url: refAny.imageUrl } });
+        mediaParts += 1;
+      }
+
+      if (Array.isArray(refAny.images) && refAny.images.length > 0 && mediaParts < MAX_MEDIA_PARTS) {
+        for (const imageUrl of refAny.images) {
+          if (mediaParts >= MAX_MEDIA_PARTS) break;
+          if (!canUseHttpUrl(imageUrl)) continue;
+          parts.push({ type: 'image_url', image_url: { url: imageUrl } });
+          mediaParts += 1;
+        }
+      }
+    }
+
+    if (summaryLines.length > 0) {
+      parts.unshift({
+        type: 'text',
+        text: `附件与参考资料（请优先结合这些内容回答）：\n${summaryLines.join('\n')}`
+      });
+    }
+
+    if (parts.length === 0) return null;
+    return { role: 'user', content: parts };
+  };
+
+  const buildAttachmentTextFallback = async (
     refs: (ProjectItem | Work | LocalFileItem | Material | TextSelectionItem)[]
   ): Promise<string> => {
     if (!refs || refs.length === 0) return '';
-
-    const attachments = await Promise.all(refs.map(async (ref) => {
-      const base: any = {
-        id: (ref as any).id,
-        type: (ref as any).type,
-        title: (ref as any).title || (ref as any).name || 'Untitled',
-        sourceUrl: (ref as any).sourceUrl,
-        mediaUrl: (ref as any).mediaUrl,
-        images: (ref as any).images,
-        preview: (ref as any).preview,
-        content: (ref as any).content,
-      };
-
-      if ((ref as any).type === 'local-file' && (ref as LocalFileItem).file) {
+    const DOCX_MAX_CHARS = 180000;
+    const DOCX_CHUNK_SIZE = 6000;
+    const lines: string[] = ['附件摘要（原生附件格式被当前模型拒绝，已自动降级为文本）：'];
+    for (const ref of refs) {
+      const refAny: any = ref;
+      const title = refAny.title || refAny.name || 'Untitled';
+      const type = refAny.type || 'unknown';
+      lines.push(`- [${type}] ${title}`);
+      const content = String(refAny.content || refAny.preview || '').trim();
+      if (content) lines.push(content.slice(0, 1500));
+      if (type === 'local-file' && (ref as LocalFileItem).file) {
         const file = (ref as LocalFileItem).file;
-        const base64 = await readFileAsBase64(file);
-        return {
-          ...base,
-          file: {
-            name: file.name,
-            mimeType: file.type || 'application/octet-stream',
-            size: file.size,
-            base64,
-          },
-        };
+        const extractedText = await extractLocalFileTextForPrompt(file);
+        if (extractedText) {
+          if (isDocxFile(file)) {
+            const normalized = normalizeExtractedText(extractedText);
+            const trimmed = normalized.slice(0, DOCX_MAX_CHARS);
+            const chunks = splitTextIntoChunks(trimmed, DOCX_CHUNK_SIZE);
+            const wasTruncated = normalized.length > DOCX_MAX_CHARS;
+            lines.push(`  docx_text_chunks=${chunks.length}${wasTruncated ? ` (truncated_to=${DOCX_MAX_CHARS})` : ''}`);
+            chunks.forEach((chunk, idx) => {
+              lines.push(`[DOCX ${file.name}] chunk ${idx + 1}/${chunks.length}`);
+              lines.push(chunk);
+            });
+          } else {
+            lines.push(extractedText.slice(0, 2000));
+          }
+        }
+        lines.push(`  file: ${file.name}, mime=${file.type || 'application/octet-stream'}, size=${Math.round(file.size / 1024)}KB`);
       }
-
-      return base;
-    }));
-
-    return `附件列表（请作为上下文使用）：\n${JSON.stringify(attachments, null, 2)}`;
+    }
+    return lines.join('\n');
   };
 
   const handleSendMessage = async (
@@ -3442,7 +3786,7 @@ const ProjectDetailView: React.FC<{
     const modelOverride = options?.modelId;
 
     if (agentMode === 'image') {
-      setChatError('图片模型无法用于文本对话，请选择 Ask/Write 模式');
+      setChatError('Image models cannot be used for text chat. Please switch to Ask/Write mode.');
       return;
     }
 
@@ -3457,11 +3801,11 @@ const ProjectDetailView: React.FC<{
     setIsSendingChat(true);
 
     try {
-      const attachmentText = await buildAttachmentText(chatReferences);
+      const attachmentMessage = await buildAttachmentMessage(chatReferences);
       const payloadHistory = [...chatHistory];
-      if (attachmentText) {
-        // 单独一条消息承载附件内容，避免影响用户原始输入
-        payloadHistory.push({ role: 'user', content: attachmentText });
+      if (attachmentMessage) {
+        // 单独一条消息承载附件，避免影响用户原始输入。
+        payloadHistory.push(attachmentMessage);
       }
       payloadHistory.push(userMsg);
 
@@ -3476,7 +3820,24 @@ const ProjectDetailView: React.FC<{
       }
 
       const modelId = modelOverride || selectedModel || OPENROUTER_FALLBACK_MODEL;
-      const reply = await callOpenRouterChat(payloadHistory, modelId);
+      let degradedForAttachments = false;
+      let reply = '';
+      try {
+        reply = await callOpenRouterChat(payloadHistory, modelId);
+      } catch (firstErr: any) {
+        const firstMsg = String(firstErr?.message || '');
+        const is400 = /\b400\b/.test(firstMsg);
+        if (!attachmentMessage || !is400) throw firstErr;
+
+        degradedForAttachments = true;
+        const fallbackAttachmentText = await buildAttachmentTextFallback(chatReferences);
+        const retryHistory = [...chatHistory];
+        if (fallbackAttachmentText) {
+          retryHistory.push({ role: 'user', content: fallbackAttachmentText });
+        }
+        retryHistory.push(userMsg);
+        reply = await callOpenRouterChat(retryHistory, modelId);
+      }
       const finalReply = (() => {
         const titleLine = (options?.titleOverride || '').trim();
         if (!titleLine) return reply;
@@ -3485,6 +3846,9 @@ const ProjectDetailView: React.FC<{
         if (options?.prependTitle === false) return reply;
         return `${normalized}\n\n${reply}`;
       })();
+      if (degradedForAttachments) {
+        setChatHistory(prev => [...prev, { role: 'system', type: 'warning', content: '附件原生格式与当前模型不兼容，已自动切换为文本摘要发送。' }]);
+      }
       setChatHistory(prev => [...prev, { role: 'assistant', content: finalReply }]);
       addWorkFromContent(finalReply, options?.titleOverride);
     } catch (err: any) {
@@ -3534,7 +3898,7 @@ const ProjectDetailView: React.FC<{
   const addShortcutCommand = () => {
     const newShortcut: ShortcutCommand = {
       id: `sc-${Date.now()}`,
-      name: '新建快捷指令',
+      name: '鏂板缓蹇嵎鎸囦护',
       prompt: '',
       icon: 'sparkles',
       agentMode: selectedAgentMode,
@@ -3729,9 +4093,9 @@ const ProjectDetailView: React.FC<{
       .split(/\r?\n/)
       .map(l => l.trim())
       .find(l => l.length > 0) || '';
-    let cleaned = firstLine
-      .replace(/^#+\s*/, '')
-      .replace(/^[-*•]\s*/, '');
+      let cleaned = firstLine
+        .replace(/^#+\s*/, '')
+        .replace(/^[-*•]\s*/, '');
     if (!cleaned) cleaned = 'Chat Response';
     const maxLen = 80;
     return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen)}...` : cleaned;
@@ -3839,7 +4203,7 @@ const ProjectDetailView: React.FC<{
         case 'search': return <><GlobeIcon className="w-4 h-4 flex-shrink-0" /> <span className="truncate max-w-[85px]">Search Internet</span></>;
         case 'write': return <><PenToolIcon className="w-4 h-4 flex-shrink-0" /> <span className="truncate max-w-[85px]">Write Document</span></>;
         case 'image': return <><ImageIcon className="w-4 h-4 flex-shrink-0" /> <span className="truncate max-w-[85px]">Create Image</span></>;
-        default: return <><span className="text-lg leading-none font-bold flex-shrink-0">∞</span> <span className="truncate max-w-[85px]">Agent</span></>;
+        default: return <><span className="text-lg leading-none font-bold flex-shrink-0">*</span> <span className="truncate max-w-[85px]">Agent</span></>;
     }
   };
 
@@ -3899,14 +4263,14 @@ const ProjectDetailView: React.FC<{
              <div className="h-full flex gap-6 px-8 py-6 overflow-hidden">
                <div className="w-72 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col">
                  <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-                   <div className="text-sm font-semibold text-gray-900">快捷指令</div>
+                   <div className="text-sm font-semibold text-gray-900">蹇嵎鎸囦护</div>
                  </div>
                  <div className="px-4 py-3">
                    <button 
                      onClick={addShortcutCommand}
                      className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-full bg-gray-900 text-white text-sm font-medium hover:bg-gray-800 transition-colors"
                    >
-                     <PlusIcon className="w-4 h-4" /> 新建快捷指令
+                     <PlusIcon className="w-4 h-4" /> 鏂板缓蹇嵎鎸囦护
                    </button>
                  </div>
                  <div className="flex-1 overflow-y-auto px-2 pb-3 custom-scrollbar">
@@ -3921,7 +4285,7 @@ const ProjectDetailView: React.FC<{
                         <span className="flex-shrink-0 w-6 h-6 rounded-lg bg-gray-50 flex items-center justify-center">
                           {renderShortcutIcon(sc.icon)}
                         </span>
-                        <span className="truncate text-sm font-medium text-gray-900">{sc.name || '未命名指令'}</span>
+                         <span className="truncate text-sm font-medium text-gray-900">{sc.name || '未命名指令'}</span>
                       </button>
                      );
                    })}
@@ -3934,12 +4298,12 @@ const ProjectDetailView: React.FC<{
                       <div className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center">
                         {renderShortcutIcon(activeShortcut?.icon)}
                       </div>
-                      <h3 className="text-lg font-bold text-gray-900">{activeShortcut?.name || '新建快捷指令'}</h3>
+                      <h3 className="text-lg font-bold text-gray-900">{activeShortcut?.name || '鏂板缓蹇嵎鎸囦护'}</h3>
                     </div>
                     <div className="flex items-center gap-2">
-                      <button className="p-2 rounded-full hover:bg-gray-100 text-gray-500" title="分享"><ShareIcon className="w-4 h-4" /></button>
+                      <button className="p-2 rounded-full hover:bg-gray-100 text-gray-500" title="鍒嗕韩"><ShareIcon className="w-4 h-4" /></button>
                       {activeShortcut && (
-                        <button className="p-2 rounded-full hover:bg-red-50 text-red-500" title="删除" onClick={() => deleteShortcutCommand(activeShortcut.id)}>
+                        <button className="p-2 rounded-full hover:bg-red-50 text-red-500" title="鍒犻櫎" onClick={() => deleteShortcutCommand(activeShortcut.id)}>
                           <TrashIcon className="w-4 h-4" />
                         </button>
                       )}
@@ -3948,17 +4312,17 @@ const ProjectDetailView: React.FC<{
                   {activeShortcut ? (
                     <div className="flex-1 overflow-y-auto p-6 space-y-5 custom-scrollbar">
                       <div className="space-y-2">
-                        <label className="text-xs font-semibold text-gray-600">名称</label>
+                        <label className="text-xs font-semibold text-gray-600">鍚嶇О</label>
                         <input 
                           value={activeShortcut.name}
                           onChange={(e) => updateShortcutCommand(activeShortcut.id, { name: e.target.value })}
                           className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-gray-900 focus:outline-none"
-                          placeholder="输入快捷指令名称"
+                          placeholder="杈撳叆蹇嵎鎸囦护鍚嶇О"
                         />
                       </div>
 
                       <div className="space-y-2">
-                        <label className="text-xs font-semibold text-gray-600">指令</label>
+                        <label className="text-xs font-semibold text-gray-600">鎸囦护</label>
                         <div className="border border-gray-200 rounded-xl bg-gray-50">
                           <textarea 
                             value={activeShortcut.prompt}
@@ -4043,7 +4407,7 @@ const ProjectDetailView: React.FC<{
                                      className="px-2 py-1 rounded-lg bg-white border border-gray-200 flex items-center gap-1 hover:border-gray-300"
                                    >
                                      <LayoutIcon className="w-4 h-4" />
-                                     <span className="text-gray-700">风格</span>
+                                      <span className="text-gray-700">风格</span>
                                      <ChevronDownIcon className="w-3 h-3 text-gray-500" />
                                    </button>
                                    {showShortcutImageStyleSelector && (
@@ -4491,18 +4855,18 @@ const ProjectDetailView: React.FC<{
                            </p>
                                {selectedTemplate.id === 't-longform-image' && null}
                            <div className="w-full bg-blue-50/50 border border-blue-100 rounded-xl p-4 mb-10 flex flex-col gap-2 text-blue-800">
-                               <div className="flex items-center gap-2">
-                                 <CheckSquareIcon className="w-5 h-5" />
-                                 <span className="font-medium">选中资料：<span className="font-bold">{selectedContextIds.size}</span></span>
-                               </div>
-                               <div className="flex items-center gap-2 text-sm">
-                                 <PenToolIcon className="w-4 h-4" />
-                                 <span>选中作品：<span className="font-bold">{selectedWorkIds.size}</span></span>
-                               </div>
-                               <div className="flex items-center gap-2 text-sm text-gray-700">
-                                 <EditIcon className="w-4 h-4" />
-                                 <span>提示词：<span className="font-semibold truncate" title={templatePrompts[selectedTemplate.id] || selectedTemplate.defaultPrompt || ''}>{templatePrompts[selectedTemplate.id] || selectedTemplate.defaultPrompt || '暂无提示词'}</span></span>
-                               </div>
+                                <div className="flex items-center gap-2">
+                                  <CheckSquareIcon className="w-5 h-5" />
+                                  <span className="font-medium">选中资料：<span className="font-bold">{selectedContextIds.size}</span></span>
+                                </div>
+                                <div className="flex items-center gap-2 text-sm">
+                                  <PenToolIcon className="w-4 h-4" />
+                                  <span>选中作品：<span className="font-bold">{selectedWorkIds.size}</span></span>
+                                </div>
+                                <div className="flex items-center gap-2 text-sm text-gray-700">
+                                  <EditIcon className="w-4 h-4" />
+                                  <span>提示词：<span className="font-semibold truncate" title={templatePrompts[selectedTemplate.id] || selectedTemplate.defaultPrompt || ''}>{templatePrompts[selectedTemplate.id] || selectedTemplate.defaultPrompt || '暂无提示词'}</span></span>
+                                </div>
                            </div>
                           <div className="flex items-center gap-4 w-full">
                               <Button 
@@ -4884,7 +5248,7 @@ const ProjectDetailView: React.FC<{
                       <div className="absolute right-2 bottom-2 flex items-center gap-1">
                       </div>
                     </div>
-                    {chatError && <div className="text-xs text-red-500 mt-1 px-1">⚠ {chatError}</div>}
+                    {chatError && <div className="text-xs text-red-500 mt-1 px-1">鈿?{chatError}</div>}
                     <div className="flex items-center justify-between mt-3">
                       <div className="flex items-center gap-2 relative">
                           <button 
@@ -4920,7 +5284,7 @@ const ProjectDetailView: React.FC<{
                                             onClick={() => { setSelectedAgentMode('agent'); setShowAgentMenu(false); }}
                                             className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg flex items-center gap-3 relative"
                                         >
-                                            <span className="w-4 h-4 flex items-center justify-center text-lg leading-none font-bold">∞</span>
+                                            <span className="w-4 h-4 flex items-center justify-center text-lg leading-none font-bold">*</span>
                                             <span>Agent</span>
                                             {selectedAgentMode === 'agent' && <CheckIcon className="w-4 h-4 text-gray-900 absolute right-3" />}
                                         </button>
@@ -5038,7 +5402,7 @@ const ProjectDetailView: React.FC<{
                                                   {size === 'Horizontal' && <span className="w-3 h-2 border border-current rounded-[1px]"></span>}
                                                   {size === 'Square' && <span className="w-2.5 h-2.5 border border-current rounded-[1px]"></span>}
                                                   {size === 'Vertical' && <span className="w-2 h-3 border border-current rounded-[1px]"></span>}
-                                                  {size === 'Horizontal' ? '横向' : size === 'Square' ? '正方形' : '纵向'}
+                                                   {size === 'Horizontal' ? '横向' : size === 'Square' ? '正方形' : '纵向'}
                                                </button>
                                             ))}
                                          </div>
@@ -5123,7 +5487,7 @@ const ProjectDetailView: React.FC<{
                    />
                  </div>
                  <div className="flex items-center justify-end gap-3">
-                   <Button variant="secondary" size="sm" className="rounded-full px-4" onClick={() => setEditingTemplate(null)}>取消</Button>
+                    <Button variant="secondary" size="sm" className="rounded-full px-4" onClick={() => setEditingTemplate(null)}>取消</Button>
                    <Button 
                      variant="primary" 
                      size="sm" 
@@ -5133,7 +5497,7 @@ const ProjectDetailView: React.FC<{
                        setEditingTemplate(null);
                      }}
                    >
-                     保存
+                     淇濆瓨
                    </Button>
                  </div>
               </div>
@@ -5261,3 +5625,4 @@ export const WorkspacePage: React.FC = () => {
     </div>
   );
 };
+
