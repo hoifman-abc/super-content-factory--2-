@@ -1,28 +1,10 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
-import * as ReactDOM from 'react-dom';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import mammoth from 'mammoth';
 
-// React 19 removed the default exported findDOMNode; react-quill still calls it.
-// Provide a lightweight compatibility shim for editor DOM lookup only.
-(ReactDOM as any).findDOMNode = (ReactDOM as any).findDOMNode || ((inst: any) => {
-  if (!inst) return null;
-  if ((inst as any).current) return (inst as any).current;
-  if ((inst as any).nodeType) return inst;
-  return null;
-});
-// Compatibility for CommonJS-style default import used by react-quill internals.
-if (!(ReactDOM as any).default) {
-  (ReactDOM as any).default = {
-    ...ReactDOM,
-    findDOMNode: (ReactDOM as any).findDOMNode,
-  };
-} else if (!(ReactDOM as any).default.findDOMNode) {
-  (ReactDOM as any).default.findDOMNode = (ReactDOM as any).findDOMNode;
-}
 import { Button } from '../components/Button';
 import { 
   SearchIcon, GlobeIcon, PdfIcon, FileTextIcon, SparklesIcon, 

@@ -36,6 +36,8 @@ const SONG_FONT_STACK = "'FZXiaoBiaoSong', 'Noto Serif SC', 'Songti SC', 'SimSun
 const TITLE_FONT_STACK = "'SourceHanSerifCNHeavy', 'Source Han Serif CN Heavy', 'Source Han Serif CN', '思源宋体 CN Heavy', '思源宋体 CN', 'FZXiaoBiaoSongGBK', 'FZXiaoBiaoSong', 'Noto Serif SC', 'Songti SC', 'SimSun', serif";
 const BODY_LINE_HEIGHT = 1.75;
 const BLOCK_MARGIN_EM = 1.15;
+const MINIMAL_TITLE_SCALE = 3.1;
+const MINIMAL_TITLE_TOP_OFFSET = 40;
 const LONGFORM_FONT_EMBED_CSS = `
 @font-face {
   font-family: 'SourceHanSerifCNHeavy';
@@ -230,7 +232,8 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
       return `<span style="display: inline-block; border-bottom: 9px solid ${minimalCharLineColor}; padding-bottom: 0.05em; margin-bottom: 0.08em;">${char}</span>`;
     }).join('');
 
-    return `<div style="margin-bottom: 52px;"><div style="height: 2px; width: 100%; background: ${minimalTopLineColor}; border-radius: 9999px; margin-bottom: 34px;"></div><h1 style="font-size: ${fontSize * 2.55}px; line-height: 1.1; font-weight: 900; color: ${currentTheme.title}; margin: 0; text-align: left; word-break: break-all; font-family: ${TITLE_FONT_STACK};">${decoratedChars}</h1></div>`;
+    const minimalTitleTopMargin = MINIMAL_TITLE_TOP_OFFSET + (fontSize * MINIMAL_TITLE_SCALE);
+    return `<div style="margin-top: ${minimalTitleTopMargin}px; margin-bottom: 52px;"><div style="height: 2px; width: 100%; background: ${minimalTopLineColor}; border-radius: 9999px; margin-bottom: 34px;"></div><h1 style="font-size: ${fontSize * MINIMAL_TITLE_SCALE}px; line-height: 1.1; font-weight: 900; color: ${currentTheme.title}; margin: 0; text-align: left; word-break: break-all; font-family: ${TITLE_FONT_STACK};">${decoratedChars}</h1></div>`;
   }, [currentTheme.title, fontSize, minimalCharLineColor, minimalTopLineColor]);
 
   const totalPreviewPages = useMemo(() => (shouldShowCover ? 1 : 0) + pages.length, [shouldShowCover, pages]);
@@ -1200,9 +1203,9 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
                               }}
                             >
                               {isMinimalTemplate && index === 0 && minimalInlineTitle && (
-                                <div style={{ marginBottom: '52px' }}>
+                                <div style={{ marginTop: `${MINIMAL_TITLE_TOP_OFFSET + (fontSize * MINIMAL_TITLE_SCALE)}px`, marginBottom: '52px' }}>
                                   <div style={{ height: '2px', width: '100%', background: minimalTopLineColor, borderRadius: '9999px', marginBottom: '34px' }} />
-                                  <h1 style={{ fontSize: `${fontSize * 2.55}px`, lineHeight: 1.1, fontWeight: 900, color: currentTheme.title, margin: 0, textAlign: 'left', wordBreak: 'break-all', fontFamily: TITLE_FONT_STACK }}>
+                                  <h1 style={{ fontSize: `${fontSize * MINIMAL_TITLE_SCALE}px`, lineHeight: 1.1, fontWeight: 900, color: currentTheme.title, margin: 0, textAlign: 'left', wordBreak: 'break-all', fontFamily: TITLE_FONT_STACK }}>
                                     {Array.from(minimalInlineTitle).map((char, charIdx) => {
                                       if (char === '\n') return <br key={`minimal-title-br-${charIdx}`} />;
                                       if (char === ' ') {
