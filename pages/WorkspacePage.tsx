@@ -3880,7 +3880,7 @@ const ProjectDetailView: React.FC<{
   const addShortcutCommand = () => {
     const newShortcut: ShortcutCommand = {
       id: `sc-${Date.now()}`,
-      name: '鏂板缓蹇嵎鎸囦护',
+      name: '新建快捷指令',
       prompt: '',
       icon: 'sparkles',
       agentMode: selectedAgentMode,
@@ -4245,14 +4245,14 @@ const ProjectDetailView: React.FC<{
              <div className="h-full flex gap-6 px-8 py-6 overflow-hidden">
                <div className="w-72 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col">
                  <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-                   <div className="text-sm font-semibold text-gray-900">蹇嵎鎸囦护</div>
+                   <div className="text-sm font-semibold text-gray-900">快捷指令</div>
                  </div>
                  <div className="px-4 py-3">
                    <button 
                      onClick={addShortcutCommand}
                      className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-full bg-gray-900 text-white text-sm font-medium hover:bg-gray-800 transition-colors"
                    >
-                     <PlusIcon className="w-4 h-4" /> 鏂板缓蹇嵎鎸囦护
+                     <PlusIcon className="w-4 h-4" /> 新建快捷指令
                    </button>
                  </div>
                  <div className="flex-1 overflow-y-auto px-2 pb-3 custom-scrollbar">
@@ -4280,12 +4280,12 @@ const ProjectDetailView: React.FC<{
                       <div className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center">
                         {renderShortcutIcon(activeShortcut?.icon)}
                       </div>
-                      <h3 className="text-lg font-bold text-gray-900">{activeShortcut?.name || '鏂板缓蹇嵎鎸囦护'}</h3>
+                      <h3 className="text-lg font-bold text-gray-900">{activeShortcut?.name || '新建快捷指令'}</h3>
                     </div>
                     <div className="flex items-center gap-2">
-                      <button className="p-2 rounded-full hover:bg-gray-100 text-gray-500" title="鍒嗕韩"><ShareIcon className="w-4 h-4" /></button>
+                      <button className="p-2 rounded-full hover:bg-gray-100 text-gray-500" title="分享"><ShareIcon className="w-4 h-4" /></button>
                       {activeShortcut && (
-                        <button className="p-2 rounded-full hover:bg-red-50 text-red-500" title="鍒犻櫎" onClick={() => deleteShortcutCommand(activeShortcut.id)}>
+                        <button className="p-2 rounded-full hover:bg-red-50 text-red-500" title="删除" onClick={() => deleteShortcutCommand(activeShortcut.id)}>
                           <TrashIcon className="w-4 h-4" />
                         </button>
                       )}
@@ -4299,7 +4299,7 @@ const ProjectDetailView: React.FC<{
                           value={activeShortcut.name}
                           onChange={(e) => updateShortcutCommand(activeShortcut.id, { name: e.target.value })}
                           className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-gray-900 focus:outline-none"
-                          placeholder="杈撳叆蹇嵎鎸囦护鍚嶇О"
+                          placeholder="输入快捷指令名称"
                         />
                       </div>
 
@@ -5230,7 +5230,7 @@ const ProjectDetailView: React.FC<{
                       <div className="absolute right-2 bottom-2 flex items-center gap-1">
                       </div>
                     </div>
-                    {chatError && <div className="text-xs text-red-500 mt-1 px-1">鈿?{chatError}</div>}
+                    {chatError && <div className="text-xs text-red-500 mt-1 px-1">⚠ {chatError}</div>}
                     <div className="flex items-center justify-between mt-3">
                       <div className="flex items-center gap-2 relative">
                           <button 
@@ -5479,7 +5479,7 @@ const ProjectDetailView: React.FC<{
                        setEditingTemplate(null);
                      }}
                    >
-                     淇濆瓨
+                     保存
                    </Button>
                  </div>
               </div>

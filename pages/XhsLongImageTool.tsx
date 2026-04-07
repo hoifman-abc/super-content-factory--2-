@@ -213,10 +213,9 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
   const minimalCharLineColor = 'rgba(156, 163, 175, 0.35)';
   const contentInsets = useMemo(() => {
     if (ratio === CanvasRatio.RATIO_9_16) {
-      // 9:16 需要更靠下起排，同时减少底部留白
-      return { top: 188, bottom: 20, side: 100 };
+      return { top: 190, bottom: 20, side: 100 };
     }
-    return { top: 100, bottom: 100, side: 100 };
+    return { top: 140, bottom: 128, side: 100 };
   }, [ratio]);
 
   const buildMinimalHeroHtml = useCallback((heroTitle: string) => {
@@ -364,7 +363,8 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
     const config = RATIO_MAP[ratio];
     const lines = text.split('\n').filter(l => l.trim() !== '');
     const headerHeight = currentTemplate.headerStyle === 'none' ? 0 : 64;
-    const footerHeight = 96;
+    // Reserve just enough for page decoration at bottom to avoid over-shrinking content.
+    const footerHeight = 40;
     const borderInset = currentTemplate.hasBorder ? 16 : 0;
     const maxContentHeight = config.height - headerHeight - footerHeight - contentInsets.top - contentInsets.bottom - borderInset;
     const shouldInjectMinimalHero = isMinimalTemplate && !!minimalInlineTitle;
