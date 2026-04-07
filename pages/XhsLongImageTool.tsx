@@ -132,8 +132,8 @@ const LONGFORM_FONT_EMBED_CSS = `
 const OPENROUTER_BASE_URL = import.meta.env.VITE_OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
 const OPENROUTER_SITE_URL = import.meta.env.VITE_OPENROUTER_SITE_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 const OPENROUTER_IMAGE_MODEL = import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_2_5_FLASH_IMAGE || 'google/gemini-2.5-flash-image';
-const OPENROUTER_TEXT_MODEL = import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_3_PRO || import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_2_5_PRO || 'google/gemini-2.5-pro';
-const OPENROUTER_LAYOUT_MODEL = import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_3_PRO || import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_2_5_PRO || 'google/gemini-2.5-pro';
+const OPENROUTER_TEXT_MODEL = import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_3_1_PRO || import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_3_PRO || import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_2_5_PRO || 'google/gemini-2.5-pro';
+const OPENROUTER_LAYOUT_MODEL = import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_3_1_PRO || import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_3_PRO || import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_2_5_PRO || 'google/gemini-2.5-pro';
 
 const callOpenRouterJson = async (prompt: string, model: string = OPENROUTER_TEXT_MODEL) => {
   const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY;

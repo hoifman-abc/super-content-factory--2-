@@ -22,6 +22,12 @@ import {
 } from '../components/Icons';
 import { Link } from 'react-router-dom';
 import XhsLongImageTool from './XhsLongImageTool';
+import {
+  areAllMaterialsSelected,
+  buildMaterialSelectionSet,
+  clampSelectionToMaterials,
+  countSelectedMaterials,
+} from '../utils/works-materials-selection.js';
 
 // Quill toolbar configuration for richer note editing
 const QUILL_MODULES = {
@@ -978,7 +984,7 @@ const MODEL_OPTIONS: ModelOption[] = [
   { id: 'gpt-5.1', name: 'GPT-5.1', provider: 'openai', tags: [{ label: 'Pro', color: 'bg-blue-100 text-blue-600' }] },
   { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'google', tags: [{ label: 'Limited Free', color: 'bg-green-100 text-green-600' }] },
   { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'google' },
-  { id: 'gemini-3-pro', name: 'Gemini 3 Pro', provider: 'google', tags: [{ label: 'Pro', color: 'bg-blue-100 text-blue-600' }] },
+  { id: 'gemini-3.1-pro', name: 'Gemini 3.1 Pro', provider: 'google', tags: [{ label: 'Pro', color: 'bg-blue-100 text-blue-600' }] },
   { id: 'claude-sonnet-4.5', name: 'Claude Sonnet 4.5', provider: 'anthropic' },
   { id: 'claude-sonnet-4.5-thinking', name: 'Claude Sonnet 4.5', provider: 'anthropic', tags: [{ label: 'Thinking', color: 'bg-gray-100 text-gray-600' }] },
   { id: 'claude-opus-4.5', name: 'Claude Opus 4.5', provider: 'anthropic', tags: [{ label: 'Pro', color: 'bg-blue-100 text-blue-600' }] },
@@ -1123,9 +1129,10 @@ const OPENROUTER_FALLBACK_MODEL = import.meta.env.VITE_OPENROUTER_MODEL || 'goog
 const OPENROUTER_MODEL_MAP: Record<string, string> = {
   'gemini-2.5-flash': 'google/gemini-2.5-flash',
   'gemini-2.5-pro': 'google/gemini-2.5-pro',
-  // If you have Gemini 3 Pro access, set VITE_OPENROUTER_GEMINI3_ID
-  // or VITE_OPENROUTER_MODEL_MAP__GEMINI_3_PRO in .env.local
-  'gemini-3-pro': import.meta.env.VITE_OPENROUTER_GEMINI3_ID || 'google/gemini-3-pro-preview',
+  // Gemini 3.1 Pro (compat with legacy GEMINI_3_PRO / GEMINI3_ID keys)
+  'gemini-3.1-pro': import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_3_1_PRO || import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_3_PRO || import.meta.env.VITE_OPENROUTER_GEMINI3_ID || 'google/gemini-3.1-pro-preview',
+  // Backward-compatible alias for older localStorage/default values
+  'gemini-3-pro': import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_3_1_PRO || import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_3_PRO || import.meta.env.VITE_OPENROUTER_GEMINI3_ID || 'google/gemini-3.1-pro-preview',
   // OpenAI
   'gpt-4o': 'openai/gpt-4o',
   'gpt-5': 'openai/gpt-5',
@@ -3282,6 +3289,17 @@ const ProjectDetailView: React.FC<{
     }
   }, [selectedMaterial.id, project.items]);
 
+  useEffect(() => {
+    setSelectedContextIds(prev => {
+      const clamped = clampSelectionToMaterials(prev, project.items);
+      if (clamped.size !== prev.size) return clamped;
+      for (const id of prev) {
+        if (!clamped.has(id)) return clamped;
+      }
+      return prev;
+    });
+  }, [project.items]);
+
 
   const toggleContextSelection = (id: string) => {
     const newSet = new Set(selectedContextIds);
@@ -3308,10 +3326,10 @@ const ProjectDetailView: React.FC<{
   };
 
   const toggleSelectAll = () => {
-    if (selectedContextIds.size === MOCK_MATERIALS.length) {
+    if (areAllMaterialsSelected(selectedContextIds, project.items)) {
       setSelectedContextIds(new Set());
     } else {
-      setSelectedContextIds(new Set(MOCK_MATERIALS.map(m => m.id)));
+      setSelectedContextIds(buildMaterialSelectionSet(project.items));
     }
   };
 
@@ -3319,18 +3337,18 @@ const ProjectDetailView: React.FC<{
     if (!selectedTemplate) return;
     if (selectedTemplate.id === 't-longform-image') {
       const selectedWorksArr = works.filter(w => selectedWorkIds.has(w.id));
-      const projectMaterials = project.items.filter(i => selectedContextIds.has(i.id));
-      const mockMaterials = MOCK_MATERIALS.filter(m => selectedContextIds.has(m.id));
+      const selectedMaterialIds = clampSelectionToMaterials(selectedContextIds, project.items);
+      const projectMaterials = project.items.filter(i => selectedMaterialIds.has(i.id));
 
-      const primaryTitle = selectedWorksArr[0]?.title || projectMaterials[0]?.title || mockMaterials[0]?.title || '';
+      const primaryTitle = selectedWorksArr[0]?.title || projectMaterials[0]?.title || '';
       const workBodies = selectedWorksArr.map(w => w.content || '').filter(Boolean);
-      const materialBodies = [...projectMaterials, ...mockMaterials].map((m: any) => m.content || '').filter(Boolean);
+      const materialBodies = projectMaterials.map((m: any) => m.content || '').filter(Boolean);
       const combinedText = [...workBodies, ...materialBodies].filter(Boolean).join('\n\n');
 
       const state = {
         ratio: longFormAspect,
         prompt: templatePrompts[selectedTemplate.id] || selectedTemplate.description,
-        selectedMaterialIds: Array.from(selectedContextIds),
+        selectedMaterialIds: Array.from(selectedMaterialIds),
         selectedWorkIds: Array.from(selectedWorkIds),
         title: primaryTitle,
         text: combinedText
@@ -4217,6 +4235,8 @@ const ProjectDetailView: React.FC<{
     }
     return true;
   });
+  const selectedProjectMaterialCount = countSelectedMaterials(selectedContextIds, project.items);
+  const allProjectMaterialsSelected = areAllMaterialsSelected(selectedContextIds, project.items);
 
   const FILTER_OPTIONS = ['All', 'Article', 'Note', 'Image', 'Link', 'Video', 'Other'];
 
@@ -4629,41 +4649,45 @@ const ProjectDetailView: React.FC<{
                         className="flex items-center gap-2 text-xs font-semibold text-gray-700 hover:text-gray-900"
                         onClick={toggleSelectAll}
                       >
-                        {selectedContextIds.size === MOCK_MATERIALS.length ? (
+                        {allProjectMaterialsSelected ? (
                           <CheckSquareIcon className="w-4 h-4 text-gray-900" />
                         ) : (
                           <SquareIcon className="w-4 h-4 text-gray-400" />
                         )}
                         <span>Select All</span>
                       </button>
-                      <span className="text-[11px] text-gray-400">{selectedContextIds.size} selected</span>
+                      <span className="text-[11px] text-gray-400">{selectedProjectMaterialCount} selected</span>
                     </div>
-                    {MOCK_MATERIALS.map(material => {
-                      const isSelected = selectedContextIds.has(material.id);
-                      return (
-                        <div 
-                           key={material.id} 
-                           className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${isSelected ? 'bg-gray-50' : 'hover:bg-gray-50'}`}
-                           onClick={() => toggleContextSelection(material.id)}
-                        >
-                           <div className="mt-0.5 text-gray-400">
+                    {project.items.length === 0 ? (
+                      <div className="px-2 py-6 text-xs text-gray-400 italic">No materials</div>
+                    ) : (
+                      project.items.map(material => {
+                        const isSelected = selectedContextIds.has(material.id);
+                        return (
+                          <div 
+                            key={material.id} 
+                            className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${isSelected ? 'bg-gray-50' : 'hover:bg-gray-50'}`}
+                            onClick={() => toggleContextSelection(material.id)}
+                          >
+                            <div className="mt-0.5 text-gray-400">
                               {isSelected ? <CheckSquareIcon className="w-4 h-4 text-gray-900" /> : <SquareIcon className="w-4 h-4" /> }
-                           </div>
-                           <div className="flex-1 min-w-0">
-                               <div className="flex items-center gap-2 mb-1">
-                                  {getIconForType(material.type)}
-                                  <h4 className={`text-sm leading-snug line-clamp-2 ${isSelected ? 'text-gray-900 font-medium' : 'text-gray-500'}`}>
-                                     {material.title}
-                                  </h4>
-                               </div>
-                               <div className="text-xs text-gray-400 pl-6 flex items-center justify-between">
-                                  <span>{material.date}</span>
-                                  {material.sourceUrl && <LinkIcon className="w-3 h-3"/>}
-                               </div>
-                           </div>
-                        </div>
-                      );
-                    })}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                {getIconForType(material.type)}
+                                <h4 className={`text-sm leading-snug line-clamp-2 ${isSelected ? 'text-gray-900 font-medium' : 'text-gray-500'}`}>
+                                  {material.title || 'Untitled Item'}
+                                </h4>
+                              </div>
+                              <div className="text-xs text-gray-400 pl-6 flex items-center justify-between">
+                                <span>{material.timeAgo}</span>
+                                {material.sourceUrl && <LinkIcon className="w-3 h-3"/>}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
                 )
              ) : (
@@ -4839,7 +4863,7 @@ const ProjectDetailView: React.FC<{
                            <div className="w-full bg-blue-50/50 border border-blue-100 rounded-xl p-4 mb-10 flex flex-col gap-2 text-blue-800">
                                 <div className="flex items-center gap-2">
                                   <CheckSquareIcon className="w-5 h-5" />
-                                  <span className="font-medium">选中资料：<span className="font-bold">{selectedContextIds.size}</span></span>
+                                  <span className="font-medium">选中资料：<span className="font-bold">{selectedProjectMaterialCount}</span></span>
                                 </div>
                                 <div className="flex items-center gap-2 text-sm">
                                   <PenToolIcon className="w-4 h-4" />
