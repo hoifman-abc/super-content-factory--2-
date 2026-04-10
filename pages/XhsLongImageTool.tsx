@@ -38,6 +38,7 @@ const BODY_LINE_HEIGHT = 1.75;
 const BLOCK_MARGIN_EM = 1.15;
 const MINIMAL_TITLE_SCALE = 3.1;
 const MINIMAL_TITLE_TOP_OFFSET = 40;
+const MINIMAL_COVER_VERTICAL_SHIFT = 60;
 const LONGFORM_FONT_EMBED_CSS = `
 @font-face {
   font-family: 'SourceHanSerifCNHeavy';
@@ -135,6 +136,33 @@ const OPENROUTER_IMAGE_MODEL = import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI
 const OPENROUTER_TEXT_MODEL = import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_3_1_PRO || import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_3_PRO || import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_2_5_PRO || 'google/gemini-2.5-pro';
 const OPENROUTER_LAYOUT_MODEL = import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_3_1_PRO || import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_3_PRO || import.meta.env.VITE_OPENROUTER_MODEL_MAP__GEMINI_2_5_PRO || 'google/gemini-2.5-pro';
 
+const normalizeBodyToRawText = (value: string) => value
+  .replace(/\r/g, '')
+  .replace(/^#\s*/gm, '')
+  .replace(/^>\s*/gm, '')
+  .replace(/==/g, '')
+  .replace(/[ \t\n]/g, '');
+
+const countArticleCharacters = (value: string) => Array.from(normalizeBodyToRawText(value)).length;
+
+const fallbackReadMinutes = (charCount: number) => Math.max(1, Math.round(charCount / 460));
+const MIN_LAYOUT_TITLES = 2;
+const MIN_LAYOUT_QUOTES = 2;
+const MIN_LAYOUT_HIGHLIGHTS = 5;
+
+const getFormattingStats = (value: string) => ({
+  titleCount: (value.match(/^#\s+/gm) || []).length,
+  quoteCount: (value.match(/^>\s+/gm) || []).length,
+  highlightCount: (value.match(/==[^=\n]+==/g) || []).length,
+});
+
+const meetsMinimumFormattingCounts = (value: string) => {
+  const stats = getFormattingStats(value);
+  return stats.titleCount >= MIN_LAYOUT_TITLES
+    && stats.quoteCount >= MIN_LAYOUT_QUOTES
+    && stats.highlightCount >= MIN_LAYOUT_HIGHLIGHTS;
+};
+
 const callOpenRouterJson = async (prompt: string, model: string = OPENROUTER_TEXT_MODEL) => {
   const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY;
   if (!apiKey) throw new Error('缺少 OpenRouter Key，请在 .env.local 配置 VITE_OPENROUTER_API_KEY');
@@ -197,6 +225,8 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [isGeneratingCover, setIsGeneratingCover] = useState(false);
   const [isRegeneratingImage, setIsRegeneratingImage] = useState(false);
+  const [aiEstimatedReadMinutes, setAiEstimatedReadMinutes] = useState<number | null>(null);
+  const [hasAiOptimizedLayout, setHasAiOptimizedLayout] = useState(false);
   
   const [currentPreviewIndex, setCurrentPreviewIndex] = useState(0);
   
@@ -209,17 +239,60 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
   const isMinimalTemplate = template === CanvasTemplate.MINIMAL;
   const shouldShowCover = useMemo(() => template === CanvasTemplate.CLASSIC && !!(title || coverData), [template, title, coverData]);
   const minimalInlineTitle = useMemo(() => (title || coverData?.title || '').trim(), [title, coverData]);
+  const articleCharacterCount = useMemo(() => countArticleCharacters(text), [text]);
+  const minimalMetaLine = useMemo(() => {
+    if (!isMinimalTemplate || !hasAiOptimizedLayout || articleCharacterCount <= 0) return '';
+    const minutes = aiEstimatedReadMinutes ?? fallbackReadMinutes(articleCharacterCount);
+    return `全文${articleCharacterCount}字 | 阅读需要${minutes}分钟`;
+  }, [isMinimalTemplate, hasAiOptimizedLayout, articleCharacterCount, aiEstimatedReadMinutes]);
   const minimalTopLineColor = 'rgba(156, 163, 175, 0.5)';
   const minimalCharLineColor = 'rgba(156, 163, 175, 0.35)';
   const contentInsets = useMemo(() => {
     if (ratio === CanvasRatio.RATIO_9_16) {
       return { top: 190, bottom: 20, side: 100 };
     }
-    return { top: 140, bottom: 128, side: 100 };
+    if (ratio === CanvasRatio.RATIO_3_4) {
+      return { top: 114, bottom: 52, side: 86 };
+    }
+    return { top: 134, bottom: 104, side: 96 };
+  }, [ratio]);
+  const bodyLineHeight = useMemo(() => (ratio === CanvasRatio.RATIO_3_4 ? 1.6 : BODY_LINE_HEIGHT), [ratio]);
+  const blockMarginEm = useMemo(() => (ratio === CanvasRatio.RATIO_3_4 ? 0.72 : BLOCK_MARGIN_EM), [ratio]);
+  const coverLayout = useMemo(() => {
+    if (ratio === CanvasRatio.RATIO_3_4) {
+      return {
+        imageHeight: '44%',
+        textHeight: '56%',
+        textPaddingX: 88,
+        textPaddingTop: 50,
+        textPaddingBottom: 62,
+        titleScale: 2.2,
+        titleMarginBottom: 36,
+        abstractMaxHeight: 460,
+        abstractLineHeight: 1.78,
+      };
+    }
+    return {
+      imageHeight: '42%',
+      textHeight: '58%',
+      textPaddingX: 100,
+      textPaddingTop: 80,
+      textPaddingBottom: 80,
+      titleScale: 2.3,
+      titleMarginBottom: 60,
+      abstractMaxHeight: 400,
+      abstractLineHeight: 1.9,
+    };
   }, [ratio]);
 
   const buildMinimalHeroHtml = useCallback((heroTitle: string) => {
     const safeTitle = heroTitle
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+    const safeMetaLine = minimalMetaLine
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
@@ -231,9 +304,12 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
       return `<span style="display: inline-block; border-bottom: 9px solid ${minimalCharLineColor}; padding-bottom: 0.05em; margin-bottom: 0.08em;">${char}</span>`;
     }).join('');
 
-    const minimalTitleTopMargin = MINIMAL_TITLE_TOP_OFFSET + (fontSize * MINIMAL_TITLE_SCALE);
-    return `<div style="margin-top: ${minimalTitleTopMargin}px; margin-bottom: 52px;"><div style="height: 2px; width: 100%; background: ${minimalTopLineColor}; border-radius: 9999px; margin-bottom: 34px;"></div><h1 style="font-size: ${fontSize * MINIMAL_TITLE_SCALE}px; line-height: 1.1; font-weight: 900; color: ${currentTheme.title}; margin: 0; text-align: left; word-break: break-all; font-family: ${TITLE_FONT_STACK};">${decoratedChars}</h1></div>`;
-  }, [currentTheme.title, fontSize, minimalCharLineColor, minimalTopLineColor]);
+    const minimalTitleTopMargin = MINIMAL_TITLE_TOP_OFFSET + (fontSize * MINIMAL_TITLE_SCALE) - MINIMAL_COVER_VERTICAL_SHIFT;
+    const metaHtml = safeMetaLine
+      ? `<div style="display: flex; align-items: center; gap: 14px; margin-bottom: 18px; color: rgba(107, 114, 128, 0.9); font-size: ${Math.max(22, Math.round(fontSize * 0.72))}px; font-weight: 700; line-height: 1.2; font-family: ${SONG_FONT_STACK};"><span style="display: inline-block; width: ${Math.max(14, Math.round(fontSize * 0.42))}px; height: ${Math.max(14, Math.round(fontSize * 0.42))}px; border: 2px solid rgba(107, 114, 128, 0.75); border-radius: 9999px; position: relative; flex-shrink: 0;"><span style="position: absolute; left: 50%; top: 22%; width: 2px; height: 34%; transform: translateX(-50%); background: rgba(107, 114, 128, 0.75); border-radius: 1px;"></span><span style="position: absolute; left: 50%; top: 50%; width: 30%; height: 2px; transform-origin: left center; transform: translateY(-50%) rotate(35deg); background: rgba(107, 114, 128, 0.75); border-radius: 1px;"></span></span><span>${safeMetaLine}</span></div>`
+      : '';
+    return `<div style="margin-top: ${minimalTitleTopMargin}px; margin-bottom: 52px;">${metaHtml}<div style="height: 2px; width: 100%; background: ${minimalTopLineColor}; border-radius: 9999px; margin-bottom: 34px;"></div><h1 style="font-size: ${fontSize * MINIMAL_TITLE_SCALE}px; line-height: 1.1; font-weight: 900; color: ${currentTheme.title}; margin: 0; text-align: left; word-break: break-all; font-family: ${TITLE_FONT_STACK};">${decoratedChars}</h1></div>`;
+  }, [currentTheme.title, fontSize, minimalCharLineColor, minimalTopLineColor, minimalMetaLine]);
 
   const totalPreviewPages = useMemo(() => (shouldShowCover ? 1 : 0) + pages.length, [shouldShowCover, pages]);
   
@@ -335,8 +411,8 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
   };
 
   const getBlockHTML = (block: ContentBlock, fSize: number) => {
-    const lineH = BODY_LINE_HEIGHT; 
-    let style = `font-size: ${fSize}px; line-height: ${lineH}; margin-bottom: ${BLOCK_MARGIN_EM}em; white-space: pre-wrap; word-break: break-all; font-family: ${SONG_FONT_STACK}; font-weight: 600;`;
+    const lineH = bodyLineHeight;
+    let style = `font-size: ${fSize}px; line-height: ${lineH}; margin-bottom: ${blockMarginEm}em; white-space: pre-wrap; word-break: break-all; font-family: ${SONG_FONT_STACK}; font-weight: 600;`;
     const highlightBg = theme === CanvasTheme.DARK ? 'rgba(180, 83, 9, 0.4)' : 'rgba(254, 249, 195, 0.8)';
     
     let content = block.text.replace(
@@ -345,10 +421,10 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
     );
     
     if (block.type === 'title') {
-      style = `font-size: ${fSize * 1.4}px; font-weight: 900; margin-bottom: ${BLOCK_MARGIN_EM}em; line-height: 1.3; font-family: ${TITLE_FONT_STACK};`;
+      style = `font-size: ${fSize * 1.4}px; font-weight: 900; margin-bottom: ${blockMarginEm}em; line-height: 1.3; font-family: ${TITLE_FONT_STACK};`;
       return `<h2 style="${style}">${content}</h2>`;
     } else if (block.type === 'quote') {
-      style = `font-size: ${fSize}px; border-left: 8px solid #ddd; padding-left: 30px; margin-bottom: ${BLOCK_MARGIN_EM}em; line-height: ${lineH}; font-family: ${SONG_FONT_STACK}; font-weight: 600;`;
+      style = `font-size: ${fSize}px; border-left: 8px solid #ddd; padding-left: 30px; margin-bottom: ${blockMarginEm}em; line-height: ${lineH}; font-family: ${SONG_FONT_STACK}; font-weight: 600;`;
       return `<blockquote style="${style}">${content}</blockquote>`;
     }
     return `<p style="${style}">${content}</p>`;
@@ -378,7 +454,7 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
 
     let currentPages: PageContent[] = [];
     let currentPageBlocks: ContentBlock[] = [];
-    
+
     const tester = measureRef.current;
     tester.style.width = `${config.width - contentInsets.side * 2}px`;
     tester.innerHTML = '';
@@ -388,27 +464,150 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
       tester.appendChild(intro);
     }
 
-    for (const block of allBlocks) {
+    const isTextBlockElement = (el: Element | null): el is HTMLElement => {
+      if (!el || !(el instanceof HTMLElement)) return false;
+      return /^(P|H2|BLOCKQUOTE)$/i.test(el.tagName);
+    };
+
+    const createBlockElement = (block: ContentBlock): HTMLElement | null => {
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = getBlockHTML(block, fontSize);
-      const blockEl = tempDiv.firstElementChild as HTMLElement;
-      if (!blockEl) continue; 
+      return tempDiv.firstElementChild as HTMLElement | null;
+    };
+
+    const appendMeasuredBlock = (blockEl: HTMLElement) => {
+      const prevEl = tester.lastElementChild;
+      if (isTextBlockElement(prevEl)) {
+        prevEl.style.marginBottom = `${blockMarginEm}em`;
+      }
+      blockEl.style.marginBottom = '0';
       tester.appendChild(blockEl);
-      
-      if (tester.offsetHeight > maxContentHeight) {
+    };
+
+    const removeLastMeasuredBlock = () => {
+      const last = tester.lastElementChild;
+      if (!last) return;
+      last.remove();
+      const newLast = tester.lastElementChild;
+      if (isTextBlockElement(newLast)) {
+        newLast.style.marginBottom = '0';
+      }
+    };
+
+    const getSplitPoints = (value: string) => {
+      const len = value.length;
+      if (len <= 1) return [];
+
+      const delimiters: number[] = [];
+      for (let i = 0; i < len - 1; i++) {
+        if (value[i] === '=' && value[i + 1] === '=') {
+          delimiters.push(i);
+          i += 1;
+        }
+      }
+      const protectedRanges: Array<[number, number]> = [];
+      for (let i = 0; i + 1 < delimiters.length; i += 2) {
+        protectedRanges.push([delimiters[i], delimiters[i + 1] + 2]);
+      }
+      const inProtectedRange = (idx: number) =>
+        protectedRanges.some(([start, end]) => idx > start && idx < end);
+
+      const points = new Set<number>();
+      for (let i = 1; i < len; i++) {
+        if (inProtectedRange(i)) continue;
+        const prev = value[i - 1];
+        const next = value[i];
+        const punctuationBoundary = /[。！？；!?;，,、：:）)\]】”"』」》〉]/.test(prev);
+        const newlineBoundary = prev === '\n' || next === '\n';
+        const spaceBoundary = next === ' ' || next === '\t';
+        if (punctuationBoundary || newlineBoundary || spaceBoundary || i % 8 === 0) {
+          points.add(i);
+        }
+      }
+      return Array.from(points).sort((a, b) => a - b);
+    };
+
+    const splitBlockToFit = (block: ContentBlock): { head: ContentBlock; tail: ContentBlock } | null => {
+      if (block.type === 'title') return null;
+      const splitPoints = getSplitPoints(block.text);
+      if (splitPoints.length === 0) return null;
+
+      const canFitHeadAt = (cutIndex: number) => {
+        const headText = block.text.slice(0, cutIndex);
+        const tailText = block.text.slice(cutIndex);
+        if (!headText.trim() || !tailText.trim()) return false;
+        const headEl = createBlockElement({ ...block, text: headText });
+        if (!headEl) return false;
+        appendMeasuredBlock(headEl);
+        const fits = tester.offsetHeight <= maxContentHeight;
+        removeLastMeasuredBlock();
+        return fits;
+      };
+
+      let low = 0;
+      let high = splitPoints.length - 1;
+      let best = -1;
+      while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const cut = splitPoints[mid];
+        if (canFitHeadAt(cut)) {
+          best = cut;
+          low = mid + 1;
+        } else {
+          high = mid - 1;
+        }
+      }
+
+      if (best <= 0 || best >= block.text.length) return null;
+
+      const headText = block.text.slice(0, best).replace(/\n+$/g, '');
+      const tailText = block.text.slice(best).replace(/^\n+/g, '');
+      if (!headText.trim() || !tailText.trim()) return null;
+      return {
+        head: { ...block, text: headText },
+        tail: { ...block, text: tailText },
+      };
+    };
+
+    const queue: ContentBlock[] = [...allBlocks];
+    while (queue.length > 0) {
+      const block = queue.shift()!;
+      const blockEl = createBlockElement(block);
+      if (!blockEl) continue;
+
+      appendMeasuredBlock(blockEl);
+      if (tester.offsetHeight <= maxContentHeight) {
+        currentPageBlocks.push(block);
+        continue;
+      }
+
+      removeLastMeasuredBlock();
+      const splitResult = splitBlockToFit(block);
+
+      if (splitResult) {
+        const headEl = createBlockElement(splitResult.head);
+        if (headEl) {
+          appendMeasuredBlock(headEl);
+          currentPageBlocks.push(splitResult.head);
+        }
         if (currentPageBlocks.length > 0) {
           currentPages.push({ blocks: [...currentPageBlocks], pageIndex: currentPages.length });
-          currentPageBlocks = [block];
-          tester.innerHTML = '';
-          const newBlockEl = blockEl.cloneNode(true) as HTMLElement;
-          tester.appendChild(newBlockEl);
-        } else {
-          currentPages.push({ blocks: [block], pageIndex: currentPages.length });
-          currentPageBlocks = [];
-          tester.innerHTML = '';
         }
+        currentPageBlocks = [];
+        tester.innerHTML = '';
+        queue.unshift(splitResult.tail);
+        continue;
+      }
+
+      if (currentPageBlocks.length > 0) {
+        currentPages.push({ blocks: [...currentPageBlocks], pageIndex: currentPages.length });
+        currentPageBlocks = [];
+        tester.innerHTML = '';
+        queue.unshift(block);
       } else {
-        currentPageBlocks.push(block);
+        appendMeasuredBlock(blockEl);
+        currentPages.push({ blocks: [block], pageIndex: currentPages.length });
+        tester.innerHTML = '';
       }
     }
 
@@ -418,18 +617,13 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
       currentPages.push({ blocks: [], pageIndex: 0 });
     }
     setPages(currentPages);
-  }, [text, ratio, fontSize, theme, template, isMinimalTemplate, minimalInlineTitle, buildMinimalHeroHtml, contentInsets, currentTemplate]);
+  }, [text, ratio, fontSize, theme, template, isMinimalTemplate, minimalInlineTitle, buildMinimalHeroHtml, contentInsets, currentTemplate, bodyLineHeight, blockMarginEm]);
 
   useEffect(() => {
     paginateText();
   }, [paginateText]);
 
-  const normalizeFormattedBody = (value: string) => value
-    .replace(/\r/g, '')
-    .replace(/^#\s*/gm, '')
-    .replace(/^>\s*/gm, '')
-    .replace(/==/g, '')
-    .replace(/[ \t\n]/g, '');
+  const normalizeFormattedBody = (value: string) => normalizeBodyToRawText(value);
 
   const applySentenceLineBreaks = (value: string) => {
     const punctuations = new Set(['。', '！', '？', '；', '!', '?', ';']);
@@ -514,28 +708,13 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
       .join('');
   };
 
-  const preferHighlightsOverQuotes = (value: string) => {
-    let quoteCount = 0;
-    return value
-      .split('\n')
-      .map((line) => {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('> ')) return line;
-        quoteCount += 1;
-        if (quoteCount <= 1) return line;
-        const quoteContent = trimmed.replace(/^>\s*/, '').trim();
-        return quoteContent ? `==${quoteContent}==` : '';
-      })
-      .join('\n');
-  };
-
   const enhanceHighlightPhrases = (value: string) => {
-    // Avoid overly fragmented highlights like 2-3 characters.
-    let updated = value.replace(/==([^=\n]{1,3})==/g, '$1');
+    // Avoid overly fragmented highlights like 1-2 characters.
+    let updated = value.replace(/==([^=\n]{1,2})==/g, '$1');
     const lines = updated.split('\n');
     const emotionHints = ['别怕', '放心', '正常', '真诚', '勇敢', '坦诚', '不完美', '我想告诉你', '我想说', '我会', '我决定', '必杀技'];
     const existingHighlights = (updated.match(/==[^=\n]+==/g) || []).length;
-    let autoBudget = Math.max(0, 4 - existingHighlights);
+    let autoBudget = Math.max(0, MIN_LAYOUT_HIGHLIGHTS - existingHighlights);
 
     updated = lines.map((line) => {
       if (autoBudget <= 0) return line;
@@ -561,6 +740,8 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
   const optimizeText = async () => {
     if (!text.trim()) return;
     setIsOptimizing(true);
+    setHasAiOptimizedLayout(false);
+    setAiEstimatedReadMinutes(null);
     try {
       const formatPrompt = `你是中文内容排版编辑。请只对下列正文做“排版标注”，禁止改写内容。
 
@@ -572,8 +753,10 @@ ${text}
 2. 仅允许做三种排版标记：行首 "# "（标题）、行首 "> "（引用）、以及 "==关键短句或关键词=="（高亮）。
 3. 可以通过换行把大段拆成更易读的短段落，尽量在句号、问号、感叹号、分号后换行。
 4. “第一/第二/第三、1./2./3.、一是/二是/三是”等层次句，优先处理为标题。
-5. 优先使用高亮而不是引用；全篇引用最多 1 条，其余重点内容请用高亮。高亮优先“短句级”而不是2-3字词级，例如“别怕，把背挺直了。/我想告诉你，这都很正常。/真诚才是必杀技。”这类完整短句更优先。
-6. 不要新增 Emoji，不要新增解释，不要输出任何多余说明。
+5. 全文至少使用 2 个标题（"# "）、2 个引用（"> "）、5 处高亮（"==...=="），且尽量分布在不同段落。
+6. 高亮优先“短句级”而不是2-3字词级，例如“别怕，把背挺直了。/我想告诉你，这都很正常。/真诚才是必杀技。”这类完整短句更优先。
+7. 不要为了凑数量而添加无意义标记，保持自然可读。
+8. 不要新增 Emoji，不要新增解释，不要输出任何多余说明。
 
 输出格式严格为：
 [NEW_BODY]
@@ -612,9 +795,75 @@ ${newBody || '[空]'}
         return;
       }
 
-      const quoteAdjusted = preferHighlightsOverQuotes(newBody);
-      const highlightEnhanced = enhanceHighlightPhrases(quoteAdjusted);
-      setText(applySentenceLineBreaksSafely(highlightEnhanced));
+      if (!meetsMinimumFormattingCounts(newBody)) {
+        const retryPrompt = `请在不改动原文字符与标点的前提下，重做排版标注，并满足最低数量要求：
+1. 标题（"# "）至少 ${MIN_LAYOUT_TITLES} 个。
+2. 引用（"> "）至少 ${MIN_LAYOUT_QUOTES} 个。
+3. 高亮（"==...=="）至少 ${MIN_LAYOUT_HIGHLIGHTS} 处。
+4. 只能添加 "# "、"> "、"==" 和换行，不能新增解释。
+
+原文：
+${text}
+
+你上一次结果：
+${newBody}
+
+输出格式严格为：
+[NEW_BODY]
+<修复后的正文>`;
+        const retried = await callOpenRouterJson(retryPrompt, OPENROUTER_LAYOUT_MODEL);
+        newBody = (retried.match(/\[NEW_BODY\]\s*([\s\S]*)/)?.[1] || '').trim();
+        resultNormalized = normalizeFormattedBody(newBody);
+      }
+
+      if (!newBody || sourceNormalized !== resultNormalized) {
+        alert('AI 二次排版结果包含内容改动，已取消应用。请重试。');
+        return;
+      }
+
+      if (!meetsMinimumFormattingCounts(newBody)) {
+        const stats = getFormattingStats(newBody);
+        alert(`AI 排版未达到最少标注数量（当前：标题${stats.titleCount}、引用${stats.quoteCount}、高亮${stats.highlightCount}）。请重试。`);
+        return;
+      }
+
+      const highlightEnhanced = enhanceHighlightPhrases(newBody);
+      const finalBody = applySentenceLineBreaksSafely(highlightEnhanced);
+
+      if (!meetsMinimumFormattingCounts(finalBody)) {
+        const finalStats = getFormattingStats(finalBody);
+        alert(`排版后处理未达到最少标注数量（当前：标题${finalStats.titleCount}、引用${finalStats.quoteCount}、高亮${finalStats.highlightCount}）。请重试。`);
+        return;
+      }
+      const charCount = countArticleCharacters(finalBody);
+      let estimatedReadMinutes = fallbackReadMinutes(charCount);
+
+      try {
+        const estimatePrompt = `你是中文内容编辑，请只输出 JSON：
+{
+  "reading_minutes": 正整数
+}
+
+任务：根据下面正文估算“普通用户完整阅读所需分钟数（整数）”。
+要求：
+1. 只返回 JSON，不要解释。
+2. reading_minutes 取值 1-180。
+
+正文：
+${finalBody}`;
+        const estimateRaw = await callOpenRouterJson(estimatePrompt, OPENROUTER_LAYOUT_MODEL);
+        const estimateObj = parseJsonFromText(estimateRaw);
+        const maybeMinutes = Number((estimateObj as any)?.reading_minutes);
+        if (Number.isFinite(maybeMinutes)) {
+          estimatedReadMinutes = Math.min(180, Math.max(1, Math.round(maybeMinutes)));
+        }
+      } catch (estimateErr) {
+        console.warn('AI 阅读时长估算失败，已使用兜底算法。', estimateErr);
+      }
+
+      setText(finalBody);
+      setAiEstimatedReadMinutes(estimatedReadMinutes);
+      setHasAiOptimizedLayout(true);
     } catch (err) {
       alert("AI 排版润色失败");
     } finally {
@@ -1122,7 +1371,8 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
                         <div id="page-cover" style={{ width: `${RATIO_MAP[ratio].width}px`, height: `${RATIO_MAP[ratio].height}px`, backgroundColor: currentTheme.bg, transform: 'scale(0.45)', transformOrigin: 'top left', display: 'flex', flexDirection: 'column', fontFamily: SONG_FONT_STACK, position: 'relative' }}>
                           <div className="flex flex-col h-full w-full">
                             <div 
-                              className={`h-[42%] w-full overflow-hidden relative border-b-8 border-black/5 bg-gray-50 flex items-center justify-center group cursor-pointer transition-all ${isRegeneratingImage ? 'opacity-50 pointer-events-none' : ''}`}
+                              className={`w-full overflow-hidden relative border-b-8 border-black/5 bg-gray-50 flex items-center justify-center group cursor-pointer transition-all ${isRegeneratingImage ? 'opacity-50 pointer-events-none' : ''}`}
+                              style={{ height: coverLayout.imageHeight }}
                               onClick={regenerateCoverImage}
                             >
                               {coverData?.imageUrl ? (
@@ -1145,17 +1395,26 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
                                 </div>
                               )}
                             </div>
-                            <div className="h-[58%] w-full px-[100px] py-[80px] flex flex-col justify-start overflow-hidden">
-                              <h1 style={{ fontSize: `${fontSize * 2.3}px`, lineHeight: 1.1, fontWeight: 900, color: currentTheme.title, marginBottom: '60px', textAlign: 'left', wordBreak: 'break-all', fontFamily: TITLE_FONT_STACK }}>
+                            <div
+                              className="w-full flex flex-col justify-start overflow-hidden"
+                              style={{
+                                height: coverLayout.textHeight,
+                                paddingLeft: `${coverLayout.textPaddingX}px`,
+                                paddingRight: `${coverLayout.textPaddingX}px`,
+                                paddingTop: `${coverLayout.textPaddingTop}px`,
+                                paddingBottom: `${coverLayout.textPaddingBottom}px`,
+                              }}
+                            >
+                              <h1 style={{ fontSize: `${fontSize * coverLayout.titleScale}px`, lineHeight: 1.1, fontWeight: 900, color: currentTheme.title, marginBottom: `${coverLayout.titleMarginBottom}px`, textAlign: 'left', wordBreak: 'break-all', fontFamily: TITLE_FONT_STACK }}>
                                 {title || coverData?.title || '未命名标题'}
                               </h1>
-                              <div style={{ maxHeight: '400px', overflow: 'hidden' }}>
+                              <div style={{ maxHeight: `${coverLayout.abstractMaxHeight}px`, overflow: 'hidden' }}>
                                 <blockquote style={{ 
                                   fontSize: `${fontSize * 0.95}px`,
                                   color: currentTheme.quote, 
                                   borderLeft: `16px solid ${currentTheme.quoteBorder}`, 
                                   paddingLeft: '44px', 
-                                  lineHeight: 1.9,
+                                  lineHeight: coverLayout.abstractLineHeight,
                                   fontStyle: 'normal',
                                   fontFamily: SONG_FONT_STACK,
                                   fontWeight: 600
@@ -1203,7 +1462,16 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
                               }}
                             >
                               {isMinimalTemplate && index === 0 && minimalInlineTitle && (
-                                <div style={{ marginTop: `${MINIMAL_TITLE_TOP_OFFSET + (fontSize * MINIMAL_TITLE_SCALE)}px`, marginBottom: '52px' }}>
+                                <div style={{ marginTop: `${MINIMAL_TITLE_TOP_OFFSET + (fontSize * MINIMAL_TITLE_SCALE) - MINIMAL_COVER_VERTICAL_SHIFT}px`, marginBottom: '52px' }}>
+                                  {minimalMetaLine && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '18px', color: 'rgba(107, 114, 128, 0.9)', fontSize: `${Math.max(22, Math.round(fontSize * 0.72))}px`, fontWeight: 700, lineHeight: 1.2, fontFamily: SONG_FONT_STACK }}>
+                                      <span style={{ display: 'inline-block', width: `${Math.max(14, Math.round(fontSize * 0.42))}px`, height: `${Math.max(14, Math.round(fontSize * 0.42))}px`, border: '2px solid rgba(107, 114, 128, 0.75)', borderRadius: '9999px', position: 'relative', flexShrink: 0 }}>
+                                        <span style={{ position: 'absolute', left: '50%', top: '22%', width: '2px', height: '34%', transform: 'translateX(-50%)', background: 'rgba(107, 114, 128, 0.75)', borderRadius: '1px' }} />
+                                        <span style={{ position: 'absolute', left: '50%', top: '50%', width: '30%', height: '2px', transformOrigin: 'left center', transform: 'translateY(-50%) rotate(35deg)', background: 'rgba(107, 114, 128, 0.75)', borderRadius: '1px' }} />
+                                      </span>
+                                      <span>{minimalMetaLine}</span>
+                                    </div>
+                                  )}
                                   <div style={{ height: '2px', width: '100%', background: minimalTopLineColor, borderRadius: '9999px', marginBottom: '34px' }} />
                                   <h1 style={{ fontSize: `${fontSize * MINIMAL_TITLE_SCALE}px`, lineHeight: 1.1, fontWeight: 900, color: currentTheme.title, margin: 0, textAlign: 'left', wordBreak: 'break-all', fontFamily: TITLE_FONT_STACK }}>
                                     {Array.from(minimalInlineTitle).map((char, charIdx) => {
@@ -1232,8 +1500,8 @@ const generateImageViaOpenRouter = async (prompt: string, canvasRatio: CanvasRat
                                 <div key={bIdx} style={{ 
                                   fontSize: `${fontSize * (block.type === 'title' ? 1.4 : 1)}px`,
                                   fontWeight: block.type === 'title' ? 900 : 600,
-                                  lineHeight: block.type === 'title' ? 1.3 : BODY_LINE_HEIGHT,
-                                  marginBottom: `${BLOCK_MARGIN_EM}em`,
+                                  lineHeight: block.type === 'title' ? 1.3 : bodyLineHeight,
+                                  marginBottom: bIdx === page.blocks.length - 1 ? '0' : `${blockMarginEm}em`,
                                   color: block.type === 'title' ? currentTheme.title : block.type === 'quote' ? currentTheme.quote : currentTheme.text,
                                   borderLeft: block.type === 'quote' ? `10px solid ${currentTheme.quoteBorder}` : 'none',
                                   paddingLeft: block.type === 'quote' ? '40px' : '0',

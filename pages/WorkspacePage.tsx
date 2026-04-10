@@ -4314,7 +4314,7 @@ const ProjectDetailView: React.FC<{
                   {activeShortcut ? (
                     <div className="flex-1 overflow-y-auto p-6 space-y-5 custom-scrollbar">
                       <div className="space-y-2">
-                        <label className="text-xs font-semibold text-gray-600">鍚嶇О</label>
+                        <label className="text-xs font-semibold text-gray-600">名称</label>
                         <input 
                           value={activeShortcut.name}
                           onChange={(e) => updateShortcutCommand(activeShortcut.id, { name: e.target.value })}
@@ -4324,7 +4324,7 @@ const ProjectDetailView: React.FC<{
                       </div>
 
                       <div className="space-y-2">
-                        <label className="text-xs font-semibold text-gray-600">鎸囦护</label>
+                        <label className="text-xs font-semibold text-gray-600">指令</label>
                         <div className="border border-gray-200 rounded-xl bg-gray-50">
                           <textarea 
                             value={activeShortcut.prompt}
