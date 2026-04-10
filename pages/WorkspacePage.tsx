@@ -248,6 +248,7 @@ const WECHAT_PROXY_URL = (import.meta as any)?.env?.VITE_WECHAT_PROXY_URL || '';
 
 const XHS_PUBLISH_BASE = 'https://note.limyai.com/api/openapi';
 const XHS_PUBLISH_API_KEY = (import.meta as any)?.env?.VITE_XHS_PUBLISH_API_KEY || '';
+const XHS_LOCAL_ENABLED = String((import.meta as any)?.env?.VITE_XHS_LOCAL_PUBLISH_ENABLED ?? 'true') !== 'false';
 
 const normalizeToRemote = (url: string) => {
   if (url.startsWith('http')) return url;
@@ -354,7 +355,97 @@ type PublishXhsPayload = {
   noteId?: string;
 };
 
-const publishXhsNote = async (payload: PublishXhsPayload, idempotencyKey?: string) => {
+type XhsTagPreset = {
+  accountType: string;
+  tags: string[];
+};
+
+const XHS_TAG_PRESETS_KEY = 'scf-xhs-tag-presets-v1';
+const XHS_LAST_ACCOUNT_TYPE_KEY = 'scf-xhs-last-account-type-v1';
+const DEFAULT_XHS_TAG_PRESETS: XhsTagPreset[] = [
+  { accountType: '公考', tags: ['省考', '结构化面试', '国考'] },
+];
+
+const parseTagInput = (value: string): string[] => {
+  return Array.from(
+    new Set(
+      (value || '')
+        .split(/[,\n，]/)
+        .map(item => item.trim())
+        .filter(Boolean),
+    ),
+  ).slice(0, 20);
+};
+
+const normalizeAccountType = (value: string): string => value.trim().toLowerCase();
+
+const sanitizePreset = (preset: any): XhsTagPreset | null => {
+  const accountType = String(preset?.accountType || '').trim();
+  if (!accountType) return null;
+  const tags = parseTagInput(Array.isArray(preset?.tags) ? preset.tags.join(',') : String(preset?.tags || ''));
+  if (!tags.length) return null;
+  return { accountType, tags };
+};
+
+const readStoredXhsTagPresets = (): XhsTagPreset[] => {
+  if (typeof window === 'undefined') return DEFAULT_XHS_TAG_PRESETS;
+  const parsed = safeParseJSON<any[]>(window.localStorage.getItem(XHS_TAG_PRESETS_KEY));
+  if (!Array.isArray(parsed)) return DEFAULT_XHS_TAG_PRESETS;
+  const cleaned = parsed
+    .map(item => sanitizePreset(item))
+    .filter((item): item is XhsTagPreset => Boolean(item));
+  return cleaned.length ? cleaned : DEFAULT_XHS_TAG_PRESETS;
+};
+
+const writeStoredXhsTagPresets = (presets: XhsTagPreset[]) => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(XHS_TAG_PRESETS_KEY, JSON.stringify(presets));
+};
+
+const readStoredXhsLastAccountType = (): string => {
+  if (typeof window === 'undefined') return '';
+  return (window.localStorage.getItem(XHS_LAST_ACCOUNT_TYPE_KEY) || '').trim();
+};
+
+const writeStoredXhsLastAccountType = (value: string) => {
+  if (typeof window === 'undefined') return;
+  const next = value.trim();
+  if (!next) {
+    window.localStorage.removeItem(XHS_LAST_ACCOUNT_TYPE_KEY);
+    return;
+  }
+  window.localStorage.setItem(XHS_LAST_ACCOUNT_TYPE_KEY, next);
+};
+
+const findPresetByAccountType = (presets: XhsTagPreset[], accountType: string): XhsTagPreset | null => {
+  const normalized = normalizeAccountType(accountType);
+  if (!normalized) return null;
+  return presets.find(item => normalizeAccountType(item.accountType) === normalized) || null;
+};
+
+const createXhsApiError = (message: string, code?: string, data?: any) => {
+  const err: any = new Error(message);
+  if (code) err.code = code;
+  if (data !== undefined) err.data = data;
+  return err;
+};
+
+const publishXhsViaLocal = async (payload: PublishXhsPayload, idempotencyKey?: string) => {
+  const res = await fetch('/local-xhs/publish', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...(payload || {}), idempotencyKey: idempotencyKey || undefined }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.success === false) {
+    const message = data?.error || data?.message || res.statusText || 'Request failed';
+    const code = data?.code;
+    throw createXhsApiError(message, code, data?.data);
+  }
+  return data;
+};
+
+const publishXhsViaRemote = async (payload: PublishXhsPayload, idempotencyKey?: string) => {
   if (!XHS_PUBLISH_API_KEY) {
     throw new Error('Missing Xiaohongshu publish API key');
   }
@@ -377,7 +468,28 @@ const publishXhsNote = async (payload: PublishXhsPayload, idempotencyKey?: strin
   if (!res.ok || data?.success === false) {
     const message = data?.error || data?.message || res.statusText || 'Request failed';
     const code = data?.code;
-    throw new Error(code ? `${code}: ${message}` : message);
+    throw createXhsApiError(code ? `${code}: ${message}` : message, code, data?.data);
+  }
+  return data;
+};
+
+const publishXhsNote = async (payload: PublishXhsPayload, idempotencyKey?: string) => {
+  if (XHS_LOCAL_ENABLED) {
+    return await publishXhsViaLocal(payload, idempotencyKey);
+  }
+  return await publishXhsViaRemote(payload, idempotencyKey);
+};
+
+const waitXhsLogin = async (timeoutSec = 120) => {
+  const res = await fetch('/local-xhs/wait-login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ timeoutSec }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.success === false) {
+    const message = data?.error || data?.message || res.statusText || 'Wait login failed';
+    throw createXhsApiError(message, data?.code, data?.data);
   }
   return data;
 };
@@ -1878,6 +1990,8 @@ const PublishModal: React.FC<{
   const [imageInput, setImageInput] = useState('');
   const [images, setImages] = useState<string[]>(work?.images || (work?.imageUrl ? [work.imageUrl] : []));
   const [tagsInput, setTagsInput] = useState('');
+  const [xhsAccountType, setXhsAccountType] = useState(readStoredXhsLastAccountType);
+  const [xhsTagPresets, setXhsTagPresets] = useState<XhsTagPreset[]>(readStoredXhsTagPresets);
   const [noteId, setNoteId] = useState('');
   const [idempotencyKey, setIdempotencyKey] = useState(generateIdempotencyKey());
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1886,6 +2000,9 @@ const PublishModal: React.FC<{
   const [accountsError, setAccountsError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [xhsLoginQrUrl, setXhsLoginQrUrl] = useState('');
+  const [xhsPendingPublish, setXhsPendingPublish] = useState<{ payload: PublishXhsPayload; idempotencyKey: string } | null>(null);
+  const [isWaitingXhsLogin, setIsWaitingXhsLogin] = useState(false);
 
   useEffect(() => {
     setTitle(work?.title || '');
@@ -1895,7 +2012,28 @@ const PublishModal: React.FC<{
     setTagsInput('');
     setNoteId('');
     setIdempotencyKey(generateIdempotencyKey());
+    setXhsLoginQrUrl('');
+    setXhsPendingPublish(null);
+    setIsWaitingXhsLogin(false);
   }, [work?.id, work?.title, work?.imageUrl, work?.images, work?.content]);
+
+  useEffect(() => {
+    writeStoredXhsTagPresets(xhsTagPresets);
+  }, [xhsTagPresets]);
+
+  useEffect(() => {
+    writeStoredXhsLastAccountType(xhsAccountType);
+  }, [xhsAccountType]);
+
+  const matchedXhsPreset = findPresetByAccountType(xhsTagPresets, xhsAccountType);
+  const matchedPresetTagsText = matchedXhsPreset ? matchedXhsPreset.tags.join(', ') : '';
+
+  useEffect(() => {
+    if (platform !== 'xiaohongshu') return;
+    if (!matchedPresetTagsText) return;
+    if ((tagsInput || '').trim()) return;
+    setTagsInput(matchedPresetTagsText);
+  }, [platform, matchedPresetTagsText, tagsInput]);
 
   useEffect(() => {
     if (!isOpen || platform !== 'wechat') return;
@@ -1928,13 +2066,97 @@ const PublishModal: React.FC<{
     setImages(prev => prev.filter((_, i) => i !== idx));
   };
 
+  const handleSaveXhsTagPreset = () => {
+    const accountType = xhsAccountType.trim();
+    if (!accountType) {
+      setNotice('请先填写账号类型，再保存标签模板');
+      return;
+    }
+    const tags = parseTagInput(tagsInput);
+    if (!tags.length) {
+      setNotice('当前标签为空，无法保存模板');
+      return;
+    }
+    setXhsTagPresets(prev => {
+      const existingIndex = prev.findIndex(item => normalizeAccountType(item.accountType) === normalizeAccountType(accountType));
+      if (existingIndex >= 0) {
+        const next = [...prev];
+        next[existingIndex] = { accountType, tags };
+        return next;
+      }
+      return [...prev, { accountType, tags }];
+    });
+    setNotice(`已保存「${accountType}」标签模板`);
+  };
+
+  const handleDeleteXhsTagPreset = () => {
+    const accountType = xhsAccountType.trim();
+    if (!accountType) return;
+    setXhsTagPresets(prev => prev.filter(item => normalizeAccountType(item.accountType) !== normalizeAccountType(accountType)));
+    setNotice(`已删除「${accountType}」标签模板`);
+  };
+
+  const handleApplyPresetTags = () => {
+    if (!matchedXhsPreset) {
+      setNotice('该账号类型暂无标签模板，可先输入标签后点击“保存模板”');
+      return;
+    }
+    setTagsInput(matchedXhsPreset.tags.join(', '));
+    setNotice(`已套用「${matchedXhsPreset.accountType}」标签模板`);
+  };
+
+  const handleAppendTag = (tag: string) => {
+    const merged = Array.from(new Set([...parseTagInput(tagsInput), tag])).join(', ');
+    setTagsInput(merged);
+  };
+
+  const handleContinueXhsPublishAfterLogin = async () => {
+    if (!xhsPendingPublish) return;
+    setIsWaitingXhsLogin(true);
+    setSubmitError(null);
+    try {
+      await waitXhsLogin(120);
+      const resp = await publishXhsNote(xhsPendingPublish.payload, xhsPendingPublish.idempotencyKey);
+      const data = resp?.data || {};
+      alert('发布成功');
+      onPublished?.({
+        platform: 'xiaohongshu',
+        publishUrl: data.publish_url,
+        qrImageUrl: data.xiaohongshu_qr_image_url,
+        noteId: data.note_id,
+      });
+      setXhsLoginQrUrl('');
+      setXhsPendingPublish(null);
+      onClose();
+    } catch (err: any) {
+      const code = err?.code;
+      if (code === 'XHS_LOGIN_TIMEOUT') {
+        setSubmitError('扫码超时，请重新点击发布获取新二维码');
+      } else {
+        const msg = err?.message || '登录后重试发布失败';
+        setSubmitError(msg);
+      }
+    } finally {
+      setIsWaitingXhsLogin(false);
+    }
+  };
+
   const handleSubmit = async () => {
     setSubmitError(null);
     setNotice(null);
+    if (platform === 'xiaohongshu') {
+      setXhsLoginQrUrl('');
+      setXhsPendingPublish(null);
+    }
 
     const trimmedTitle = (title || '').trim();
-    const trimmedBody = (body || '').trim();
-    const baseContent = trimmedBody || (work?.content || '');
+    const currentBody = body || '';
+    const trimmedBody = currentBody.trim();
+    // Respect the edited content in publish modal. For Xiaohongshu we should never
+    // fall back to original work content after user edits/deletes text.
+    const baseContent = platform === 'xiaohongshu'
+      ? currentBody
+      : (trimmedBody || (work?.content || ''));
     const extractedImages = extractImagesFromContent(baseContent);
     const mergedImages = Array.from(new Set([
       ...(images || []),
@@ -2104,7 +2326,7 @@ const PublishModal: React.FC<{
     try {
       const resp = await publishXhsNote(payload, finalIdempotency);
       const data = resp?.data || {};
-      alert('发布成功，已生成扫码二维码');
+      alert('发布成功');
       onPublished?.({ 
         platform: 'xiaohongshu', 
         publishUrl: data.publish_url, 
@@ -2113,6 +2335,17 @@ const PublishModal: React.FC<{
       });
       onClose();
     } catch (err: any) {
+      if (err?.code === 'XHS_LOGIN_REQUIRED') {
+        const qrImageUrl = err?.data?.qrcode_image_url || '';
+        setXhsLoginQrUrl(qrImageUrl);
+        setXhsPendingPublish({ payload, idempotencyKey: finalIdempotency });
+        setSubmitError('请先扫码登录小红书，然后点击“我已扫码，继续发布”');
+        return;
+      }
+      if (err?.code === 'XHS_BRIDGE_NOT_CONNECTED') {
+        setSubmitError('未连接到 XHS Bridge 扩展。请在 Chrome 启用扩展后，打开任意小红书页面并重试。');
+        return;
+      }
       const msg = err?.message || '发布失败，请稍后重试';
       setSubmitError(msg);
       alert(`发布失败：${msg}`);
@@ -2121,7 +2354,7 @@ const PublishModal: React.FC<{
     }
   };
 
-  const disablePublish = isSubmitting || (platform === 'wechat' ? !title.trim() : (!title.trim() && !(body || '').trim()));
+  const disablePublish = isSubmitting || isWaitingXhsLogin || (platform === 'wechat' ? !title.trim() : (!title.trim() && !(body || '').trim()));
 
   return (
     <div className="fixed inset-0 z-[160] flex items-center justify-center p-4">
@@ -2212,17 +2445,91 @@ const PublishModal: React.FC<{
           {platform === 'xiaohongshu' && (
             <div className="space-y-3">
               <div className="p-3 rounded-lg bg-red-50 border border-red-100 text-sm text-red-700">
-                发布将扣除 1 积分；建议填写幂等键避免重复扣费，接口返回的发布链接将用于生成扫码二维码。
+                点击发布后若未登录，会弹出二维码扫码登录。扫码成功后可继续自动发布。
               </div>
+              {xhsLoginQrUrl && (
+                <div className="p-4 rounded-lg border border-red-100 bg-white">
+                  <div className="text-sm font-semibold text-gray-900 mb-2">请扫码登录小红书</div>
+                  <div className="text-xs text-gray-500 mb-3">扫码完成后，点击下方“我已扫码，继续发布”。</div>
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <img src={xhsLoginQrUrl} alt="XHS Login QR" className="w-36 h-36 border border-gray-200 rounded-lg bg-white object-contain" />
+                    <div className="flex flex-col gap-2">
+                      <Button onClick={handleContinueXhsPublishAfterLogin} disabled={isWaitingXhsLogin || isSubmitting}>
+                        {isWaitingXhsLogin ? '登录确认中...' : '我已扫码，继续发布'}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          setXhsLoginQrUrl('');
+                          setXhsPendingPublish(null);
+                        }}
+                        disabled={isWaitingXhsLogin}
+                      >
+                        取消扫码
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">标签（可选，逗号分隔）</label>
+                  <div className="mt-2 space-y-2">
+                    <input
+                      value={xhsAccountType}
+                      onChange={e => setXhsAccountType(e.target.value)}
+                      placeholder="账号类型，例如：公考"
+                      list="xhs-account-type-options"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-gray-900 focus:outline-none"
+                    />
+                    <datalist id="xhs-account-type-options">
+                      {xhsTagPresets.map(preset => (
+                        <option key={preset.accountType} value={preset.accountType} />
+                      ))}
+                    </datalist>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="secondary" size="sm" onClick={handleApplyPresetTags}>套用模板</Button>
+                      <Button variant="secondary" size="sm" onClick={handleSaveXhsTagPreset}>保存模板</Button>
+                      {matchedXhsPreset && (
+                        <Button variant="ghost" size="sm" onClick={handleDeleteXhsTagPreset}>删除模板</Button>
+                      )}
+                    </div>
+                    {xhsTagPresets.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {xhsTagPresets.map(preset => (
+                          <button
+                            key={preset.accountType}
+                            onClick={() => {
+                              setXhsAccountType(preset.accountType);
+                              setTagsInput(preset.tags.join(', '));
+                            }}
+                            className={`px-2.5 py-1 rounded-full border text-xs transition-colors ${normalizeAccountType(xhsAccountType) === normalizeAccountType(preset.accountType) ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                          >
+                            {preset.accountType}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <input
                     value={tagsInput}
                     onChange={e => setTagsInput(e.target.value)}
                     placeholder="效率, 职场, 生活方式"
                     className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-gray-900 focus:outline-none"
                   />
+                  {matchedXhsPreset && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {matchedXhsPreset.tags.map(tag => (
+                        <button
+                          key={tag}
+                          onClick={() => handleAppendTag(tag)}
+                          className="px-2.5 py-1 rounded-full border border-gray-200 text-xs text-gray-700 hover:border-gray-300 hover:bg-gray-50 transition-colors"
+                        >
+                          + {tag}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">自定义 noteId（可选）</label>
@@ -2315,7 +2622,7 @@ const PublishModal: React.FC<{
 
         <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between bg-gray-50/50">
           <div className="text-xs text-gray-500">
-            {notice || (platform === 'wechat' ? '发布到公众号草稿箱（API 已接入）。' : '发布到小红书并生成扫码二维码（每次扣除 1 积分）。')}
+            {notice || (platform === 'wechat' ? '发布到公众号草稿箱（API 已接入）。' : '发布到小红书（若未登录将先扫码登录）。')}
             {submitError && <span className="text-red-500 ml-2">{submitError}</span>}
           </div>
           <div className="flex gap-3">
