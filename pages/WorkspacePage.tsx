@@ -28,6 +28,7 @@ import {
   clampSelectionToMaterials,
   countSelectedMaterials,
 } from '../utils/works-materials-selection.js';
+import { buildWechatImagePayload } from '../utils/wechat-publish-images.js';
 
 // Quill toolbar configuration for richer note editing
 const QUILL_MODULES = {
@@ -249,6 +250,9 @@ const WECHAT_PROXY_URL = (import.meta as any)?.env?.VITE_WECHAT_PROXY_URL || '';
 const XHS_PUBLISH_BASE = 'https://note.limyai.com/api/openapi';
 const XHS_PUBLISH_API_KEY = (import.meta as any)?.env?.VITE_XHS_PUBLISH_API_KEY || '';
 const XHS_LOCAL_ENABLED = String((import.meta as any)?.env?.VITE_XHS_LOCAL_PUBLISH_ENABLED ?? 'true') !== 'false';
+const XHS_TITLE_MAX_CHARS = 20;
+
+const clampXhsTitle = (input: string) => Array.from((input || '').trim()).slice(0, XHS_TITLE_MAX_CHARS).join('');
 
 const normalizeToRemote = (url: string) => {
   if (url.startsWith('http')) return url;
@@ -307,29 +311,6 @@ const postWechat = async (path: string, payload: any) => {
     throw new Error(code ? `${code}: ${message}` : message);
   }
   return data;
-};
-
-const uploadDataImageToPublicUrl = async (dataUrl: string): Promise<string> => {
-  const res = await fetch('/local-upload-image', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dataUrl }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data?.url) {
-    throw new Error(data?.message || 'Image upload failed');
-  }
-  return String(data.url);
-};
-
-const ensureWechatPublishableImage = async (input: string): Promise<string | null> => {
-  const img = (input || '').trim();
-  if (!img) return null;
-  if (/^https?:\/\//i.test(img)) return img;
-  if (/^data:image\//i.test(img)) {
-    return await uploadDataImageToPublicUrl(img);
-  }
-  return null;
 };
 
 const fetchWechatAccounts = async (): Promise<WechatAccount[]> => {
@@ -768,6 +749,7 @@ type PublishWechatPayload = {
   summary?: string;
   coverImage?: string;
   mainImages?: string[];
+  rawMainImages?: string[];
   author?: string;
   contentFormat?: 'markdown' | 'html';
   articleType?: 'news' | 'newspic';
@@ -2199,33 +2181,9 @@ const PublishModal: React.FC<{
           setSubmitError('小绿书至少需要 1 张图片');
           return;
         }
-        const convertedImages: string[] = [];
-        for (const img of mergedImages) {
-          try {
-            const converted = await ensureWechatPublishableImage(img);
-            if (converted) convertedImages.push(converted);
-          } catch (error: any) {
-            setNotice(prev => prev ? prev : `部分图片上传失败，已跳过：${error?.message || '未知错误'}`);
-          }
-        }
-        const uniqueConvertedImages = Array.from(new Set(convertedImages));
-        if (uniqueConvertedImages.length === 0) {
-          setSubmitError('小绿书发布图片自动上传失败，请重试。');
-          return;
-        }
-
-        // Replace with publishable image list; cover/body image logic uses this list.
-        mergedImages.length = 0;
-        uniqueConvertedImages.forEach((img) => mergedImages.push(img));
-
         if (finalBody.length > 1000) {
           finalBody = finalBody.slice(0, 1000);
           truncated = true;
-        }
-        // Ensure images are referenced in body content.
-        const missingMd = mergedImages.filter(img => !finalBody.includes(img)).map(img => `![](${img})`);
-        if (missingMd.length > 0) {
-          finalBody = `${finalBody ? `${finalBody}\n\n` : ''}${missingMd.join('\n')}`;
         }
       }
 
@@ -2235,20 +2193,37 @@ const PublishModal: React.FC<{
       const normalizedImages = mergedImages
         .map(img => (img || '').trim())
         .filter(Boolean);
+      const {
+        mainImages: backendPublishableImages,
+        rawMainImages,
+      } = buildWechatImagePayload({
+        wechatType,
+        images: normalizedImages,
+      });
 
       let coverImageToUse: string | undefined = resolvedCover || undefined;
       if (wechatType === 'greenbook') {
         // 小绿书模式：自动使用作品第一张图做封面（无需用户额外处理）
-        if (!coverImageToUse && normalizedImages.length > 0) {
-          coverImageToUse = normalizedImages[0];
+        if (!coverImageToUse && backendPublishableImages.length > 0) {
+          coverImageToUse = backendPublishableImages[0];
         }
-        // Backend has cover_image length limit; if too long, rely on mainImages.
-        if (coverImageToUse && coverImageToUse.length > 240) {
+        // Backend has cover_image length limit; if too long or still raw, rely on image lists.
+        if (coverImageToUse?.startsWith('data:')) {
+          coverImageToUse = undefined;
+          setNotice(prev => prev ? prev : '封面将由后端从小绿书图片列表生成');
+        } else if (coverImageToUse && coverImageToUse.length > 240) {
           coverImageToUse = undefined;
           setNotice(prev => prev ? prev : '封面图过长，已自动改用主图列表发布（不写入 cover_image）');
         }
-        if (!coverImageToUse && normalizedImages.length > 0) {
-          coverImageToUse = normalizedImages[0];
+        if (!coverImageToUse && backendPublishableImages.length > 0) {
+          coverImageToUse = backendPublishableImages[0];
+        }
+        // Keep body text-only when images still need backend upload through WeChat official APIs.
+        const missingMd = backendPublishableImages
+          .filter(img => !finalBody.includes(img))
+          .map(img => `![](${img})`);
+        if (missingMd.length > 0) {
+          finalBody = `${finalBody ? `${finalBody}\n\n` : ''}${missingMd.join('\n')}`;
         }
       } else {
         if (coverImageToUse?.startsWith('data:')) {
@@ -2267,7 +2242,10 @@ const PublishModal: React.FC<{
         summary,
         coverImage: coverImageToUse,
         mainImages: wechatType === 'greenbook'
-          ? (normalizedImages.length > 0 ? normalizedImages : (resolvedCover ? [resolvedCover] : undefined))
+          ? (backendPublishableImages.length > 0 ? backendPublishableImages : undefined)
+          : undefined,
+        rawMainImages: wechatType === 'greenbook'
+          ? (rawMainImages.length > 0 ? rawMainImages : undefined)
           : undefined,
         contentFormat,
         articleType,
@@ -2293,7 +2271,7 @@ const PublishModal: React.FC<{
     }
 
     // --- 小红书 ---
-    const cleanedTitle = (trimmedTitle || work?.title || '').trim().slice(0, 64);
+    const cleanedTitle = clampXhsTitle(trimmedTitle || work?.title || '');
     const pureText = stripMarkdownAndHtml(baseContent);
     if (!cleanedTitle && !pureText) {
       setSubmitError('标题和正文至少填写一项');

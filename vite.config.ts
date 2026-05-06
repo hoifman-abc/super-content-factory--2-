@@ -4,6 +4,7 @@ import os from 'os';
 import { spawn } from 'child_process';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+import { DATA_URL_IMAGE_RE, imageExtFromMime, uploadDataUrlToPublicUrl } from './utils/local-image-upload.js';
 
 let cachedBrowser: any = null;
 const EDGE_PATHS = [
@@ -80,17 +81,9 @@ const normalizeImageInputs = (input: unknown): string[] => {
     .filter(Boolean)));
 };
 
-const DATA_URL_IMAGE_RE = /^data:(image\/[a-zA-Z0-9.+-]+);base64,([\s\S]+)$/i;
+const XHS_TITLE_MAX_CHARS = 20;
 
-const imageExtFromMime = (mime: string) => {
-  const type = String(mime || '').toLowerCase();
-  if (type.includes('png')) return 'png';
-  if (type.includes('jpeg') || type.includes('jpg')) return 'jpg';
-  if (type.includes('webp')) return 'webp';
-  if (type.includes('gif')) return 'gif';
-  if (type.includes('bmp')) return 'bmp';
-  return 'bin';
-};
+const clampXhsTitle = (input: string) => Array.from((input || '').trim()).slice(0, XHS_TITLE_MAX_CHARS).join('');
 
 const materializeCliImageInputs = (images: string[], tmpDir: string): string[] => {
   const resolved: string[] = [];
@@ -195,60 +188,9 @@ export default defineConfig(({ mode }) => {
               }
 
               try {
-                const body = await new Promise<string>((resolve, reject) => {
-                  let raw = '';
-                  req.on('data', (chunk) => { raw += chunk; });
-                  req.on('end', () => resolve(raw));
-                  req.on('error', reject);
-                });
-
-                const parsed = JSON.parse(body || '{}');
+                const parsed = await readJsonBody(req);
                 const dataUrl = String(parsed?.dataUrl || '');
-                const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([\s\S]+)$/);
-                if (!match) {
-                  res.statusCode = 400;
-                  res.setHeader('Content-Type', 'application/json');
-                  res.end(JSON.stringify({ message: 'Invalid dataUrl' }));
-                  return;
-                }
-
-                const mime = match[1];
-                const base64 = match[2];
-                const bytes = Buffer.from(base64, 'base64');
-                const ext = mime.includes('png') ? 'png' : mime.includes('jpeg') || mime.includes('jpg') ? 'jpg' : mime.includes('webp') ? 'webp' : 'bin';
-                const fileName = `wechat-image-${Date.now()}.${ext}`;
-                const blob = new Blob([bytes], { type: mime });
-                let uploadedUrl = '';
-
-                // Primary: tmpfiles (returns JSON + stable direct URL via /dl/)
-                try {
-                  const fd = new FormData();
-                  fd.append('file', blob, fileName);
-                  const resp = await fetch('https://tmpfiles.org/api/v1/upload', { method: 'POST', body: fd });
-                  const raw = await resp.text();
-                  const data = JSON.parse(raw || '{}');
-                  const url = String(data?.data?.url || '').trim();
-                  if (resp.ok && /^https?:\/\//i.test(url)) {
-                    const normalized = url.replace(/^http:\/\//i, 'https://');
-                    uploadedUrl = normalized.replace('https://tmpfiles.org/', 'https://tmpfiles.org/dl/');
-                  }
-                } catch {
-                  // noop, fallback below
-                }
-
-                // Fallback: 0x0.st
-                if (!uploadedUrl) {
-                  const fd = new FormData();
-                  fd.append('file', blob, fileName);
-                  const uploadResp = await fetch('https://0x0.st', { method: 'POST', body: fd });
-                  const text = (await uploadResp.text()).trim();
-                  if (uploadResp.ok && /^https?:\/\//i.test(text)) {
-                    uploadedUrl = text.replace(/^http:\/\//i, 'https://');
-                  } else {
-                    throw new Error(text || 'Upload failed');
-                  }
-                }
-
+                const uploadedUrl = await uploadDataUrlToPublicUrl(dataUrl, env);
                 res.statusCode = 200;
                 res.setHeader('Content-Type', 'application/json');
                 res.end(JSON.stringify({ url: uploadedUrl }));
@@ -454,7 +396,7 @@ export default defineConfig(({ mode }) => {
               let tmpDir = '';
               try {
                 const parsed = await readJsonBody(req);
-                const title = String(parsed?.title || '').trim();
+                const title = clampXhsTitle(String(parsed?.title || ''));
                 const content = String(parsed?.content || '').trim();
                 const coverImage = String(parsed?.coverImage || '').trim();
                 const images = normalizeImageInputs(parsed?.images);
