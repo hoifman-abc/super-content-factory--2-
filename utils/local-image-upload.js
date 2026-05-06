@@ -57,8 +57,10 @@ const readJsonResponse = async (response) => {
 
 const extractUrlFromPayload = (payload) => {
   if (!payload || typeof payload !== 'object') return '';
+  if (typeof payload.secure_url === 'string') return payload.secure_url;
   if (typeof payload.url === 'string') return payload.url;
   if (payload.data && typeof payload.data === 'object') {
+    if (typeof payload.data.secure_url === 'string') return payload.data.secure_url;
     if (typeof payload.data.url === 'string') return payload.data.url;
     if (payload.data.data && typeof payload.data.data === 'object' && typeof payload.data.data.url === 'string') {
       return payload.data.data.url;
@@ -77,16 +79,43 @@ export const buildImageUploadFailureMessage = (failures = [], env = {}) => {
     ? failures.map(({ name, error }) => formatProviderFailure(name, error)).join('; ')
     : 'no providers were attempted';
   const hasCustomProvider = Boolean(
-    getEnvValue(env, 'WECHAT_IMAGE_UPLOAD_URL', 'VITE_WECHAT_IMAGE_UPLOAD_URL')
+    (
+      getEnvValue(
+        env,
+        'WECHAT_IMAGE_CLOUDINARY_CLOUD_NAME',
+        'VITE_WECHAT_IMAGE_CLOUDINARY_CLOUD_NAME',
+      )
+      && getEnvValue(
+        env,
+        'WECHAT_IMAGE_CLOUDINARY_UPLOAD_PRESET',
+        'VITE_WECHAT_IMAGE_CLOUDINARY_UPLOAD_PRESET',
+      )
+    )
+      || getEnvValue(env, 'WECHAT_IMAGE_UPLOAD_URL', 'VITE_WECHAT_IMAGE_UPLOAD_URL')
       || getEnvValue(env, 'WECHAT_IMAGE_SMMS_TOKEN', 'VITE_WECHAT_IMAGE_SMMS_TOKEN'),
   );
   const hint = hasCustomProvider
     ? ''
-    : ' Configure WECHAT_IMAGE_UPLOAD_URL or WECHAT_IMAGE_SMMS_TOKEN to use a working uploader.';
+    : ' Configure WECHAT_IMAGE_CLOUDINARY_CLOUD_NAME and WECHAT_IMAGE_CLOUDINARY_UPLOAD_PRESET, WECHAT_IMAGE_UPLOAD_URL, or WECHAT_IMAGE_SMMS_TOKEN to use a working uploader.';
   return `Image upload failed via ${details}.${hint}`;
 };
 
 const buildUploadProviders = ({ dataUrl, fileName, mime, blob, env, fetchFn }) => {
+  const cloudinaryCloudName = getEnvValue(
+    env,
+    'WECHAT_IMAGE_CLOUDINARY_CLOUD_NAME',
+    'VITE_WECHAT_IMAGE_CLOUDINARY_CLOUD_NAME',
+  );
+  const cloudinaryUploadPreset = getEnvValue(
+    env,
+    'WECHAT_IMAGE_CLOUDINARY_UPLOAD_PRESET',
+    'VITE_WECHAT_IMAGE_CLOUDINARY_UPLOAD_PRESET',
+  );
+  const cloudinaryFolder = getEnvValue(
+    env,
+    'WECHAT_IMAGE_CLOUDINARY_FOLDER',
+    'VITE_WECHAT_IMAGE_CLOUDINARY_FOLDER',
+  );
   const customUrl = getEnvValue(env, 'WECHAT_IMAGE_UPLOAD_URL', 'VITE_WECHAT_IMAGE_UPLOAD_URL');
   const customAuthorization = getEnvValue(
     env,
@@ -96,6 +125,28 @@ const buildUploadProviders = ({ dataUrl, fileName, mime, blob, env, fetchFn }) =
   const smmsToken = getEnvValue(env, 'WECHAT_IMAGE_SMMS_TOKEN', 'VITE_WECHAT_IMAGE_SMMS_TOKEN');
 
   const providers = [];
+
+  if (cloudinaryCloudName && cloudinaryUploadPreset) {
+    providers.push({
+      name: 'cloudinary',
+      upload: async () => {
+        const fd = new FormData();
+        fd.append('file', dataUrl);
+        fd.append('upload_preset', cloudinaryUploadPreset);
+        if (cloudinaryFolder) fd.append('folder', cloudinaryFolder);
+        const response = await fetchFn(`https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/image/upload`, {
+          method: 'POST',
+          body: fd,
+        });
+        const { text, json } = await readJsonResponse(response);
+        const url = normalizeUploadedUrl(extractUrlFromPayload(json));
+        if (!response.ok || !/^https?:\/\//i.test(url)) {
+          throw new Error(text || response.statusText || 'Upload failed');
+        }
+        return url;
+      },
+    });
+  }
 
   if (customUrl) {
     providers.push({

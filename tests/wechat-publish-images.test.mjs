@@ -5,6 +5,9 @@ import {
   buildWechatImagePayload,
   normalizeHttpImages,
   normalizeRawWechatImages,
+  pickWechatCoverImage,
+  resolveWechatPublishableImages,
+  requiresWechatImageUploadBridge,
 } from '../utils/wechat-publish-images.js';
 
 test('normalizeHttpImages keeps only trimmed HTTP image URLs', () => {
@@ -21,7 +24,7 @@ test('normalizeRawWechatImages keeps only trimmed data URLs', () => {
   );
 });
 
-test('buildWechatImagePayload splits HTTP and data URL images for greenbook publishing', () => {
+test('buildWechatImagePayload keeps only HTTP images in mainImages for greenbook publishing', () => {
   const payload = buildWechatImagePayload({
     wechatType: 'greenbook',
     images: [
@@ -65,4 +68,87 @@ test('buildWechatImagePayload keeps data URLs in rawMainImages without convertin
 
   assert.deepEqual(payload.mainImages, []);
   assert.deepEqual(payload.rawMainImages, [dataUrl]);
+});
+
+test('pickWechatCoverImage skips data URLs and falls back to the first HTTP image', () => {
+  const coverImage = pickWechatCoverImage({
+    preferredCoverImage: 'data:image/png;base64,AAA',
+    images: [
+      'data:image/png;base64,BBB',
+      ' https://cdn.example.com/a.png ',
+      'http://cdn.example.com/b.jpg',
+    ],
+  });
+
+  assert.equal(coverImage, 'https://cdn.example.com/a.png');
+});
+
+test('pickWechatCoverImage returns undefined when only raw images are available', () => {
+  const coverImage = pickWechatCoverImage({
+    images: ['data:image/png;base64,AAA', ' data:image/jpeg;base64,BBB '],
+  });
+
+  assert.equal(coverImage, undefined);
+});
+
+test('resolveWechatPublishableImages uploads raw images and preserves order', async () => {
+  const calls = [];
+  const images = await resolveWechatPublishableImages({
+    images: [
+      'data:image/png;base64,AAA',
+      'https://cdn.example.com/a.png',
+      ' data:image/jpeg;base64,BBB ',
+    ],
+    uploadDataImage: async (dataUrl) => {
+      calls.push(dataUrl);
+      if (dataUrl.includes('AAA')) return 'https://cdn.example.com/uploaded-a.png';
+      return 'https://cdn.example.com/uploaded-b.jpg';
+    },
+  });
+
+  assert.deepEqual(images, [
+    'https://cdn.example.com/uploaded-a.png',
+    'https://cdn.example.com/a.png',
+    'https://cdn.example.com/uploaded-b.jpg',
+  ]);
+  assert.deepEqual(calls, ['data:image/png;base64,AAA', 'data:image/jpeg;base64,BBB']);
+});
+
+test('resolveWechatPublishableImages reuses uploads for duplicate raw images', async () => {
+  let uploads = 0;
+  const images = await resolveWechatPublishableImages({
+    images: [
+      'data:image/png;base64,AAA',
+      'data:image/png;base64,AAA',
+    ],
+    uploadDataImage: async () => {
+      uploads += 1;
+      return 'https://cdn.example.com/uploaded-a.png';
+    },
+  });
+
+  assert.deepEqual(images, ['https://cdn.example.com/uploaded-a.png']);
+  assert.equal(uploads, 1);
+});
+
+test('requiresWechatImageUploadBridge is true for greenbook payloads with only raw images', () => {
+  assert.equal(
+    requiresWechatImageUploadBridge({
+      wechatType: 'greenbook',
+      mainImages: [],
+      rawMainImages: ['data:image/png;base64,AAA'],
+    }),
+    true,
+  );
+});
+
+test('requiresWechatImageUploadBridge is false when a greenbook payload already has HTTP images', () => {
+  assert.equal(
+    requiresWechatImageUploadBridge({
+      wechatType: 'greenbook',
+      mainImages: ['https://cdn.example.com/a.png'],
+      rawMainImages: ['data:image/png;base64,AAA'],
+    }),
+    false,
+  );
 });

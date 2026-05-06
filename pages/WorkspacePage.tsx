@@ -28,7 +28,11 @@ import {
   clampSelectionToMaterials,
   countSelectedMaterials,
 } from '../utils/works-materials-selection.js';
-import { buildWechatImagePayload } from '../utils/wechat-publish-images.js';
+import {
+  buildWechatImagePayload,
+  pickWechatCoverImage,
+  resolveWechatPublishableImages,
+} from '../utils/wechat-publish-images.js';
 
 // Quill toolbar configuration for richer note editing
 const QUILL_MODULES = {
@@ -311,6 +315,20 @@ const postWechat = async (path: string, payload: any) => {
     throw new Error(code ? `${code}: ${message}` : message);
   }
   return data;
+};
+
+const uploadDataImageToPublicUrl = async (dataUrl: string) => {
+  const response = await fetch('/local-upload-image', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataUrl }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  const url = String(payload?.url || '').trim();
+  if (!response.ok || !/^https?:\/\//i.test(url)) {
+    throw new Error(payload?.message || '图片上传失败');
+  }
+  return url;
 };
 
 const fetchWechatAccounts = async (): Promise<WechatAccount[]> => {
@@ -2200,26 +2218,45 @@ const PublishModal: React.FC<{
         wechatType,
         images: normalizedImages,
       });
+      let publishableImages = backendPublishableImages;
+      let publishableRawImages = rawMainImages;
+
+      if (wechatType === 'greenbook' && rawMainImages.length > 0) {
+        try {
+          publishableImages = await resolveWechatPublishableImages({
+            images: normalizedImages,
+            uploadDataImage: uploadDataImageToPublicUrl,
+          });
+          publishableRawImages = [];
+          setNotice(prev => prev ? prev : '已通过本地上传桥接处理小绿书图片');
+        } catch (error: any) {
+          setSubmitError(error?.message || '图片上传失败，请稍后重试');
+          return;
+        }
+      }
 
       let coverImageToUse: string | undefined = resolvedCover || undefined;
       if (wechatType === 'greenbook') {
-        // 小绿书模式：自动使用作品第一张图做封面（无需用户额外处理）
-        if (!coverImageToUse && backendPublishableImages.length > 0) {
-          coverImageToUse = backendPublishableImages[0];
-        }
+        const preferredCoverImage = (resolvedCover || '').trim();
+        coverImageToUse = pickWechatCoverImage({
+          preferredCoverImage,
+          images: publishableImages,
+        });
         // Backend has cover_image length limit; if too long or still raw, rely on image lists.
-        if (coverImageToUse?.startsWith('data:')) {
-          coverImageToUse = undefined;
-          setNotice(prev => prev ? prev : '封面将由后端从小绿书图片列表生成');
-        } else if (coverImageToUse && coverImageToUse.length > 240) {
+        if (coverImageToUse && coverImageToUse.length > 240) {
           coverImageToUse = undefined;
           setNotice(prev => prev ? prev : '封面图过长，已自动改用主图列表发布（不写入 cover_image）');
         }
-        if (!coverImageToUse && backendPublishableImages.length > 0) {
-          coverImageToUse = backendPublishableImages[0];
+        if (!coverImageToUse && publishableImages.length > 0) {
+          if (/^data:/i.test(preferredCoverImage)) {
+            setNotice(prev => prev ? prev : '封面将由后端从小绿书图片列表生成');
+          } else if (preferredCoverImage && !/^https?:\/\//i.test(preferredCoverImage)) {
+            setNotice(prev => prev ? prev : '封面格式不支持，已改由后端从小绿书图片列表生成');
+          } else {
+            setNotice(prev => prev ? prev : '封面将由后端从小绿书图片列表生成');
+          }
         }
-        // Keep body text-only when images still need backend upload through WeChat official APIs.
-        const missingMd = backendPublishableImages
+        const missingMd = publishableImages
           .filter(img => !finalBody.includes(img))
           .map(img => `![](${img})`);
         if (missingMd.length > 0) {
@@ -2242,10 +2279,10 @@ const PublishModal: React.FC<{
         summary,
         coverImage: coverImageToUse,
         mainImages: wechatType === 'greenbook'
-          ? (backendPublishableImages.length > 0 ? backendPublishableImages : undefined)
+          ? (publishableImages.length > 0 ? publishableImages : undefined)
           : undefined,
         rawMainImages: wechatType === 'greenbook'
-          ? (rawMainImages.length > 0 ? rawMainImages : undefined)
+          ? (publishableRawImages.length > 0 ? publishableRawImages : undefined)
           : undefined,
         contentFormat,
         articleType,

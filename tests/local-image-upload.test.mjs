@@ -25,6 +25,29 @@ test('imageExtFromMime handles common image mime types', () => {
   assert.equal(imageExtFromMime('image/gif'), 'gif');
 });
 
+test('uploadDataUrlToPublicUrl prefers Cloudinary when configured', async () => {
+  const calls = [];
+  const url = await uploadDataUrlToPublicUrl(TINY_PNG_DATA_URL, {
+    WECHAT_IMAGE_CLOUDINARY_CLOUD_NAME: 'demo-cloud',
+    WECHAT_IMAGE_CLOUDINARY_UPLOAD_PRESET: 'wechat-greenbook',
+  }, async (input, init) => {
+    const target = String(input);
+    calls.push(target);
+    assert.equal(target, 'https://api.cloudinary.com/v1_1/demo-cloud/image/upload');
+    assert.equal(init?.method, 'POST');
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        secure_url: 'https://res.cloudinary.com/demo-cloud/image/upload/v1/example.png',
+      }),
+    };
+  });
+
+  assert.equal(url, 'https://res.cloudinary.com/demo-cloud/image/upload/v1/example.png');
+  assert.deepEqual(calls, ['https://api.cloudinary.com/v1_1/demo-cloud/image/upload']);
+});
+
 test('uploadDataUrlToPublicUrl falls back to the next provider', async () => {
   const calls = [];
   const url = await uploadDataUrlToPublicUrl(TINY_PNG_DATA_URL, {}, async (input, init) => {
@@ -62,6 +85,8 @@ test('uploadDataUrlToPublicUrl surfaces provider failures and recovery hints', a
     (error) => {
       assert.match(error.message, /tmpfiles\.org/i);
       assert.match(error.message, /0x0\.st/i);
+      assert.match(error.message, /WECHAT_IMAGE_CLOUDINARY_CLOUD_NAME/);
+      assert.match(error.message, /WECHAT_IMAGE_CLOUDINARY_UPLOAD_PRESET/);
       assert.match(error.message, /WECHAT_IMAGE_UPLOAD_URL/);
       assert.match(error.message, /WECHAT_IMAGE_SMMS_TOKEN/);
       return true;
