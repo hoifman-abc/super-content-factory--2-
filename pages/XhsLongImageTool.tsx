@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { toPng } from 'html-to-image';
 import JSZip from 'jszip';
+import { normalizeLongformSourceText } from '../utils/longform-text.js';
 import { 
   Type as TypeIcon, 
   Settings, 
@@ -320,8 +321,11 @@ export default function App({ initialTitle, initialText }: XhsLongImageToolProps
   }, [initialTitle]);
 
   useEffect(() => {
-    if (initialText && initialText !== text) {
-      setText(initialText);
+    if (initialText !== undefined) {
+      const normalizedText = normalizeLongformSourceText(initialText);
+      if (normalizedText !== text) {
+        setText(normalizedText);
+      }
     }
   }, [initialText]);
 

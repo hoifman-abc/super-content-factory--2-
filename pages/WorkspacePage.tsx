@@ -33,6 +33,15 @@ import {
   pickWechatCoverImage,
   resolveWechatPublishableImages,
 } from '../utils/wechat-publish-images.js';
+import {
+  isAbortError,
+  requestOpenRouterChat,
+} from '../utils/openrouter-chat.js';
+import { normalizeLongformSourceText } from '../utils/longform-text.js';
+import {
+  buildWorkFromMaterial,
+  findWorkBySourceMaterialId,
+} from '../utils/material-to-work.js';
 
 // Quill toolbar configuration for richer note editing
 const QUILL_MODULES = {
@@ -198,10 +207,12 @@ interface Work {
   date: string;
   content?: string;
   preview?: string;
+  author?: string;
   imageUrl?: string;
   mediaUrl?: string;
   images?: string[];
   sourceUrl?: string;
+  sourceMaterialId?: string;
   publishedTo?: string[];
 }
 
@@ -513,7 +524,7 @@ const extractImagesFromContent = (content?: string): string[] => {
 
 const stripMarkdownAndHtml = (input?: string): string => {
   if (!input) return '';
-  let text = input;
+  let text = normalizeLongformSourceText(input);
   // Remove markdown image syntax
   text = text.replace(/!\[[^\]]*]\([^)]*\)/g, '');
   // Convert markdown links to plain text
@@ -1280,7 +1291,8 @@ type ChatMessagePayload = {
 
 const callOpenRouterChat = async (
   messages: ChatMessagePayload[],
-  modelId: string
+  modelId: string,
+  signal?: AbortSignal
 ): Promise<string> => {
   const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -1289,56 +1301,14 @@ const callOpenRouterChat = async (
 
   const resolvedModel = resolveOpenRouterModel(modelId);
   const finalModel = resolvedModel && resolvedModel.includes('/') ? resolvedModel : OPENROUTER_FALLBACK_MODEL;
-
-  const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-      // Recommended OpenRouter attribution headers
-      'HTTP-Referer': OPENROUTER_SITE_URL,
-      'X-Title': 'Super Content Factory'
-    },
-    body: JSON.stringify({
-      model: finalModel || OPENROUTER_FALLBACK_MODEL,
-      messages: messages.map(m => ({ role: m.role, content: m.content })),
-    })
+  return requestOpenRouterChat({
+    apiKey,
+    baseUrl: OPENROUTER_BASE_URL,
+    siteUrl: OPENROUTER_SITE_URL,
+    model: finalModel || OPENROUTER_FALLBACK_MODEL,
+    messages,
+    signal,
   });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    let parsedMessage = '';
-    try {
-      const parsed = JSON.parse(errorText);
-      parsedMessage =
-        parsed?.error?.message ||
-        parsed?.message ||
-        '';
-    } catch {
-      parsedMessage = '';
-    }
-
-    if (response.status === 402) {
-      throw new Error(
-        `OpenRouter billing error: insufficient credits or paid-model access required. Please top up or switch to an available free model.${parsedMessage ? ` (${parsedMessage})` : ''}`
-      );
-    }
-    if (response.status === 401) {
-      throw new Error(`OpenRouter auth failed. Check VITE_OPENROUTER_API_KEY in .env.local.${parsedMessage ? ` (${parsedMessage})` : ''}`);
-    }
-    if (response.status === 429) {
-      throw new Error(`OpenRouter rate limited the request. Please retry later or switch model.${parsedMessage ? ` (${parsedMessage})` : ''}`);
-    }
-
-    throw new Error(`OpenRouter API error ${response.status}: ${parsedMessage || errorText}`);
-  }
-
-  const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new Error('OpenRouter returned an empty response.');
-  }
-  return content.trim();
 };
 
 // --- REAL BACKEND API IMPLEMENTATION ---
@@ -1791,6 +1761,8 @@ const getIconForWork = (type: string) => {
       case 'Doc': return <FileTextIcon className="w-5 h-5 text-gray-500" />;
       case 'Slide': return <ImageIcon className="w-5 h-5 text-gray-500" />;
       case 'Page': return <LayoutIcon className="w-5 h-5 text-gray-500" />;
+      case 'Web': case 'link': case 'article': return <GlobeIcon className="w-5 h-5 text-gray-500" />;
+      case 'xiaohongshu': return <XiaohongshuIcon className="w-5 h-5 text-gray-500" />;
       case 'image': case 'Image': return <ImageIcon className="w-5 h-5 text-gray-500" />;
       case 'video': case 'Video': return <PlayCircleIcon className="w-5 h-5 text-gray-500" />;
       case 'pdf': case 'PDF': return <PdfIcon className="w-5 h-5 text-gray-500" />;
@@ -3134,11 +3106,164 @@ const ContentRenderer: React.FC<{ item: ProjectItem | Material; isEditing: boole
   );
 }
 
-// ... (Rest of the file remains unchanged, including WorkPreviewView, ProjectDetailView, WorkspacePage) ...
+const buildVideoEmbedUrl = (url?: string) => {
+  if (!url) return '';
+  if (url.includes('youtube.com/watch?v=')) {
+    const videoId = url.split('v=')[1]?.split('&')[0];
+    return videoId ? `https://www.youtube.com/embed/${videoId}` : url;
+  }
+  if (url.includes('youtu.be/')) {
+    const videoId = url.split('youtu.be/')[1]?.split('?')[0];
+    return videoId ? `https://www.youtube.com/embed/${videoId}` : url;
+  }
+  if (url.includes('bilibili.com/video/')) {
+    const bvid = url.split('video/')[1]?.split('/')[0]?.split('?')[0];
+    return bvid ? `https://player.bilibili.com/player.html?bvid=${bvid}&high_quality=1&danmaku=0` : url;
+  }
+  return url;
+};
+
+const WorkContentRenderer: React.FC<{ work: Work }> = ({ work }) => {
+  const images = work.images || (work.imageUrl ? [work.imageUrl] : []);
+  const hasHtmlContent = typeof work.content === 'string' && work.content.includes('<');
+  const bodyText = String(work.content || '').trim();
+  const rawVideoUrl = work.mediaUrl || ((work.sourceUrl || '').match(/\.(mp4|webm|ogg|mov)(\?|#|$)/i) ? work.sourceUrl : '');
+  const embedVideoUrl = buildVideoEmbedUrl(work.sourceUrl || bodyText);
+  const shouldFallbackToIframe = (work.type === 'link' || work.type === 'Web') && !bodyText && images.length === 0 && !!work.sourceUrl;
+
+  if ((work.type === 'pdf' || work.type === 'PDF') && work.sourceUrl) {
+    return (
+      <div className="w-full h-full bg-gray-100 flex flex-col">
+        <embed src={work.sourceUrl} type="application/pdf" className="w-full h-full" />
+      </div>
+    );
+  }
+
+  if (work.type === 'video' || work.type === 'Video') {
+    if (rawVideoUrl) {
+      return (
+        <div className="w-full h-full bg-black flex flex-col items-center justify-center">
+          <video
+            src={rawVideoUrl}
+            controls
+            className="max-w-full max-h-full"
+            poster={work.imageUrl}
+            autoPlay={false}
+          />
+          <div className="text-white mt-4 font-medium px-4 text-center">{work.title}</div>
+        </div>
+      );
+    }
+
+    if (embedVideoUrl && (embedVideoUrl.includes('youtube.com/embed/') || embedVideoUrl.includes('player.bilibili.com'))) {
+      return (
+        <div className="w-full h-full bg-black flex items-center justify-center">
+          <iframe
+            src={embedVideoUrl}
+            className="w-full h-full"
+            allowFullScreen
+            frameBorder="0"
+            title="Video Player"
+          />
+        </div>
+      );
+    }
+  }
+
+  if (shouldFallbackToIframe) {
+    return (
+      <div className="w-full h-full bg-gray-50 flex flex-col">
+        <div className="bg-white border-b border-gray-200 px-4 py-2 flex items-center gap-2 text-sm text-gray-500 shadow-sm z-10">
+          <LockIcon className="w-3 h-3" />
+          <input className="flex-1 bg-transparent outline-none text-gray-600" value={work.sourceUrl || ''} readOnly />
+          <button
+            onClick={() => window.open(work.sourceUrl, '_blank')}
+            className="cursor-pointer hover:text-gray-900 text-gray-500"
+          >
+            <ExternalLinkIcon className="w-4 h-4" />
+          </button>
+        </div>
+        <iframe src={work.sourceUrl} className="flex-1 w-full bg-white" title="Web Preview" />
+      </div>
+    );
+  }
+
+  const isWideArticle = work.type === 'article' || work.sourceUrl?.includes('mp.weixin.qq.com') || hasHtmlContent;
+
+  return (
+    <div className="w-full h-full overflow-y-auto custom-scrollbar">
+      <div className={`${isWideArticle ? 'max-w-5xl' : 'max-w-3xl'} mx-auto px-8 py-10 lg:px-12`}>
+        <h1 className="text-4xl font-bold text-gray-900 mb-6 leading-tight">{work.title}</h1>
+
+        <div className="flex flex-wrap items-center gap-3 mb-8">
+          {work.sourceUrl ? (
+            <div className="flex items-center gap-2">
+              {getSourceIcon(work.sourceUrl, work.type as SourceType)}
+              <span className="text-xs font-bold text-gray-900">{getHostname(work.sourceUrl)}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-gray-500">
+              {getIconForWork(work.type)}
+              <span className="text-xs font-semibold uppercase tracking-wide">{work.type}</span>
+            </div>
+          )}
+
+          {work.author ? (
+            <div className="flex items-center gap-2 px-3 py-1 bg-gray-100 rounded-full">
+              <div className="w-4 h-4 rounded-full bg-gray-400 flex items-center justify-center text-[10px] text-white font-bold">
+                {work.author[0]}
+              </div>
+              <span className="text-xs font-medium text-gray-700">{work.author}</span>
+            </div>
+          ) : null}
+
+          <div className="text-xs text-gray-500">{work.date}</div>
+
+          {work.sourceUrl && (
+            <a
+              href={work.sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-auto text-gray-400 hover:text-blue-500 flex items-center gap-1 text-xs"
+            >
+              <LinkIcon className="w-3 h-3" /> Original
+            </a>
+          )}
+        </div>
+
+        {images.length > 0 && (
+          <div className={`mb-8 ${images.length === 1 ? 'space-y-4' : 'grid grid-cols-1 sm:grid-cols-2 gap-4'}`}>
+            {images.map((img, idx) => (
+              <div key={idx} className="w-full bg-gray-50 rounded-xl overflow-hidden border border-gray-100">
+                <img
+                  src={img}
+                  alt={`${work.title || 'Work'} image ${idx + 1}`}
+                  className="w-full h-auto object-contain bg-white"
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {hasHtmlContent ? (
+          <article
+            className="prose prose-gray max-w-none prose-p:text-gray-700 prose-p:leading-loose prose-headings:font-bold prose-headings:text-gray-900 prose-img:rounded-xl prose-img:shadow-sm"
+            dangerouslySetInnerHTML={{ __html: work.content || '' }}
+          />
+        ) : bodyText ? (
+          <div className="prose prose-lg prose-gray max-w-none prose-p:leading-relaxed prose-headings:font-bold">
+            <MarkdownMessage content={bodyText} />
+          </div>
+        ) : images.length === 0 ? (
+          <p className="text-gray-400 italic">No content available for this preview.</p>
+        ) : null}
+      </div>
+    </div>
+  );
+};
 
 const WorkPreviewView: React.FC<{ work: Work; onBack: () => void; onSelectText?: () => void; onPublished?: (workId: string, info: PublishInfo) => void }> = ({ work, onBack, onSelectText, onPublished }) => {
   const [showDropdown, setShowDropdown] = useState(false);
-  const images = work.images || (work.imageUrl ? [work.imageUrl] : []);
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [publishResult, setPublishResult] = useState<PublishInfo | null>(null);
 
@@ -3228,32 +3353,8 @@ const WorkPreviewView: React.FC<{ work: Work; onBack: () => void; onSelectText?:
       </div>
 
       {/* Content Area */}
-      <div className="flex-1 overflow-y-auto p-12 custom-scrollbar" onMouseUp={onSelectText}>
-         <div className="max-w-3xl mx-auto">
-            <h1 className="text-4xl font-bold text-gray-900 mb-8">{work.title}</h1>
-            {images.length > 0 && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-                {images.map((img, idx) => (
-                  <div key={idx} className="w-full bg-gray-50 rounded-xl overflow-hidden border border-gray-100">
-                    <img
-                      src={img}
-                      alt={`${work.title || 'Work'} image ${idx + 1}`}
-                      className="w-full h-auto object-contain bg-white"
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="prose prose-lg prose-gray max-w-none prose-p:leading-relaxed prose-headings:font-bold">
-               {work.content ? (
-                 work.content.split('\n').map((para, i) => (
-                    <p key={i} className={para.startsWith('--') ? 'text-gray-400 text-sm' : ''}>{para}</p>
-                 ))
-               ) : images.length === 0 ? (
-                 <p className="text-gray-400 italic">No content available for this preview.</p>
-               ) : null}
-            </div>
-         </div>
+      <div className="flex-1 overflow-hidden" onMouseUp={onSelectText}>
+         <WorkContentRenderer work={work} />
       </div>
     </div>
       <PublishModal 
@@ -3325,6 +3426,7 @@ const ProjectDetailView: React.FC<{
     text: ''
   });
   const [isSavingLongformWork, setIsSavingLongformWork] = useState(false);
+  const [materialWorkNotice, setMaterialWorkNotice] = useState<string | null>(null);
 
   // Chat History
   const [chatHistory, setChatHistory] = useState<any[]>([]);
@@ -3333,6 +3435,7 @@ const ProjectDetailView: React.FC<{
   const [chatError, setChatError] = useState<string | null>(null);
   const [copiedReplyIndex, setCopiedReplyIndex] = useState<number | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chatAbortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -3352,6 +3455,19 @@ const ProjectDetailView: React.FC<{
       console.warn('Failed to persist chat history', err);
     }
   }, [project.id, chatHistory]);
+
+  useEffect(() => {
+    return () => {
+      chatAbortControllerRef.current?.abort();
+      chatAbortControllerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!materialWorkNotice) return;
+    const timer = window.setTimeout(() => setMaterialWorkNotice(null), 2200);
+    return () => window.clearTimeout(timer);
+  }, [materialWorkNotice]);
 
   // New Note / Edit Mode State
   const [isEditing, setIsEditing] = useState(false);
@@ -3663,8 +3779,8 @@ const ProjectDetailView: React.FC<{
       const projectMaterials = project.items.filter(i => selectedMaterialIds.has(i.id));
 
       const primaryTitle = selectedWorksArr[0]?.title || projectMaterials[0]?.title || '';
-      const workBodies = selectedWorksArr.map(w => w.content || '').filter(Boolean);
-      const materialBodies = projectMaterials.map((m: any) => m.content || '').filter(Boolean);
+      const workBodies = selectedWorksArr.map(w => normalizeLongformSourceText(w.content || '')).filter(Boolean);
+      const materialBodies = projectMaterials.map((m: any) => normalizeLongformSourceText(m.content || '')).filter(Boolean);
       const combinedText = [...workBodies, ...materialBodies].filter(Boolean).join('\n\n');
 
       const state = {
@@ -4104,6 +4220,8 @@ const ProjectDetailView: React.FC<{
       prependTitle?: boolean;
     }
   ) => {
+    if (isSendingChat) return;
+
     const agentMode = options?.agentMode ?? selectedAgentMode;
     const modelOverride = options?.modelId;
 
@@ -4121,6 +4239,8 @@ const ProjectDetailView: React.FC<{
     if (!messageOverride) setChatInput('');
     setChatError(null);
     setIsSendingChat(true);
+    const controller = new AbortController();
+    chatAbortControllerRef.current = controller;
 
     try {
       const attachmentMessage = await buildAttachmentMessage(chatReferences);
@@ -4145,8 +4265,9 @@ const ProjectDetailView: React.FC<{
       let degradedForAttachments = false;
       let reply = '';
       try {
-        reply = await callOpenRouterChat(payloadHistory, modelId);
+        reply = await callOpenRouterChat(payloadHistory, modelId, controller.signal);
       } catch (firstErr: any) {
+        if (isAbortError(firstErr)) throw firstErr;
         const firstMsg = String(firstErr?.message || '');
         const is400 = /\b400\b/.test(firstMsg);
         if (!attachmentMessage || !is400) throw firstErr;
@@ -4158,7 +4279,7 @@ const ProjectDetailView: React.FC<{
           retryHistory.push({ role: 'user', content: fallbackAttachmentText });
         }
         retryHistory.push(userMsg);
-        reply = await callOpenRouterChat(retryHistory, modelId);
+        reply = await callOpenRouterChat(retryHistory, modelId, controller.signal);
       }
       const finalReply = (() => {
         const titleLine = (options?.titleOverride || '').trim();
@@ -4174,12 +4295,23 @@ const ProjectDetailView: React.FC<{
       setChatHistory(prev => [...prev, { role: 'assistant', content: finalReply }]);
       addWorkFromContent(finalReply, options?.titleOverride);
     } catch (err: any) {
+      if (isAbortError(err)) {
+        return;
+      }
       const msg = err?.message || '调用大模型失败';
       setChatError(msg);
       setChatHistory(prev => [...prev, { role: 'system', type: 'error', content: msg }]);
     } finally {
+      if (chatAbortControllerRef.current === controller) {
+        chatAbortControllerRef.current = null;
+      }
       setIsSendingChat(false);
     }
+  };
+
+  const handleStopChat = () => {
+    chatAbortControllerRef.current?.abort();
+    chatAbortControllerRef.current = null;
   };
 
   const handleShortcut = (cmd: ShortcutCommand) => {
@@ -4279,6 +4411,8 @@ const ProjectDetailView: React.FC<{
   };
 
   const handleClearChat = () => {
+    chatAbortControllerRef.current?.abort();
+    chatAbortControllerRef.current = null;
     setChatHistory([]);
     setChatInput('');
     setChatError(null);
@@ -4286,6 +4420,8 @@ const ProjectDetailView: React.FC<{
   };
 
   const handleNewChat = () => {
+    chatAbortControllerRef.current?.abort();
+    chatAbortControllerRef.current = null;
     setChatHistory([]);
     setChatInput('');
     setChatError(null);
@@ -4455,6 +4591,28 @@ const ProjectDetailView: React.FC<{
     };
     onUpdateWorks(prev => [newWork, ...prev]);
     setSelectedWork(newWork);
+  };
+
+  const handleConvertCurrentMaterialToWork = () => {
+    if (selectedMaterial.type === 'folder') return;
+
+    const existing = findWorkBySourceMaterialId(works, selectedMaterial.id);
+    if (existing) {
+      setMaterialWorkNotice('这篇资料已经在 works 里了');
+      return;
+    }
+
+    const newWork = buildWorkFromMaterial(selectedMaterial, {
+      nowLabel: 'Just now',
+    }) as Work;
+
+    onUpdateWorks(prev => {
+      if (findWorkBySourceMaterialId(prev, selectedMaterial.id)) {
+        return prev;
+      }
+      return [newWork, ...prev];
+    });
+    setMaterialWorkNotice('已加入 works');
   };
 
   const handleTitleUpdate = (newTitle: string) => {
@@ -5305,7 +5463,19 @@ const ProjectDetailView: React.FC<{
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
+                     {materialWorkNotice && (
+                        <span className="text-xs text-gray-500">{materialWorkNotice}</span>
+                     )}
                      <div className="flex items-center gap-3 text-gray-400 border-r border-gray-200 pr-3 mr-1">
+                        <button
+                          type="button"
+                          onClick={handleConvertCurrentMaterialToWork}
+                          disabled={selectedMaterial.type === 'folder'}
+                          title="转成作品"
+                          className="p-1 rounded hover:bg-gray-100 hover:text-gray-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          <BriefcaseIcon className="w-4 h-4" />
+                        </button>
                         <SidebarIcon className="w-4 h-4" />
                         <DownloadIcon className="w-4 h-4" />
                         <LinkIcon className="w-4 h-4" />
@@ -5761,12 +5931,22 @@ const ProjectDetailView: React.FC<{
 
                       </div>
                       <button 
-                        onClick={() => handleSendMessage()}
-                        disabled={isSendingChat || !chatInput.trim()}
-                        className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${isSendingChat || !chatInput.trim() ? 'bg-gray-200 text-white opacity-60 cursor-not-allowed' : 'bg-gray-900 text-white hover:bg-primary-500'}`}
-                        title="Send (Ctrl/Cmd + Enter)"
+                        onClick={() => {
+                          if (isSendingChat) {
+                            handleStopChat();
+                            return;
+                          }
+                          handleSendMessage();
+                        }}
+                        disabled={!isSendingChat && !chatInput.trim()}
+                        className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${isSendingChat ? 'bg-red-500 text-white hover:bg-red-600' : !chatInput.trim() ? 'bg-gray-200 text-white opacity-60 cursor-not-allowed' : 'bg-gray-900 text-white hover:bg-primary-500'}`}
+                        title={isSendingChat ? 'Stop' : 'Send (Ctrl/Cmd + Enter)'}
                       >
-                      <ArrowRightIcon className="w-4 h-4 -rotate-90" />
+                      {isSendingChat ? (
+                        <span className="block w-2.5 h-2.5 rounded-[2px] bg-current" />
+                      ) : (
+                        <ArrowRightIcon className="w-4 h-4 -rotate-90" />
+                      )}
                       </button>
                     </div>
                 </div>
